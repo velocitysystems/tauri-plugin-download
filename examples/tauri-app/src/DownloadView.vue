@@ -19,7 +19,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, PropType, ref } from 'vue';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { start, cancel, pause, resume, Download, DownloadState, DownloadProgress } from 'tauri-plugin-download-api'
+import { start, cancel, pause, resume, Download, DownloadState, DownloadEvent } from 'tauri-plugin-download-api';
 
 const props = defineProps({
    model: {
@@ -28,7 +28,8 @@ const props = defineProps({
    },
 });
 
-let unlisten: UnlistenFn;
+let unlistenProgress: UnlistenFn,
+    unlistenCancel: UnlistenFn;
 
 const download = ref<Download>(), 
     progress = ref<number>(0),
@@ -43,14 +44,20 @@ onMounted(async () => {
     download.value = props.model;
     progress.value = props.model.progress;
 
-    unlisten = await listen<DownloadProgress>('tauri-plugin-download', (event) => {
-        if (event.payload.key === props.model.key) {
+    unlistenProgress = await listen<DownloadEvent>('tauri-plugin-download:progress', (event) => {
+        if (event.payload.key === props.model.key && event.payload.progress) {
           progress.value = event.payload.progress;
         }
     })
+    unlistenCancel = await listen<DownloadEvent>('tauri-plugin-download:cancel', (event) => {
+        console.debug('Download cancelled', event.payload.key);
+    })
 })
 
-onUnmounted(() => unlisten())
+onUnmounted(() => {
+  unlistenProgress();
+  unlistenCancel();
+});
 
 async function startDownload() {
     download.value = await start(props.model.key);

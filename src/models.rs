@@ -11,10 +11,15 @@ pub struct DownloadRecord {
 }
 
 #[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DownloadProgress {
-  pub key: String,
-  pub progress: f64,   
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum DownloadEvent {
+  Progress {
+    key: String,
+    progress: f64,
+  },
+  Cancel {
+    key: String,
+  },
 }
 
 pub trait DownloadRecordExt {
