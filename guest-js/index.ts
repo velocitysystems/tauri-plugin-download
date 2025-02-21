@@ -95,11 +95,11 @@ export interface Download {
 }
 
 /**
- * Represents a download progress update.
+ * Represents a download event payload.
  */
-export interface DownloadProgress {
+export interface DownloadEvent {
   key: string;
-  progress: number;
+  progress?: number;
 }
 
 /**

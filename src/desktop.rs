@@ -114,7 +114,7 @@ impl<R: Runtime> Download<R> {
         if fs::remove_file(record.path.clone()).is_err() {
           println!("[{}] File was not found or could not be deleted", &record.key);
         }
-
+        let _ = app.emit("tauri-plugin-download:cancel", DownloadEvent::Cancel{ key: record.key.clone() });
         Ok(record.with_state(DownloadState::Cancelled))
       }
 
@@ -249,7 +249,7 @@ impl<R: Runtime> Download<R> {
                 // Update record or remove if download has completed.
                 DownloadState::InProgress => {
                   println!("[{}] In Progress: {}", &record.key, progress.to_string());
-                  let _ = app.emit("tauri-plugin-download", DownloadProgress { key: record.key.clone(), progress });
+                  let _ = app.emit("tauri-plugin-download:progress", DownloadEvent::Progress { key: record.key.clone(), progress });
                   if progress < 100.0 {                    
                     Download::update_record(app, record.with_progress(progress)).unwrap();
                   }
