@@ -2,14 +2,6 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DownloadEvent {
-  pub key: String,
-  pub progress: Option<f64>, 
-  pub state: DownloadState, 
-}
-
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadRecord {
@@ -48,6 +40,7 @@ impl DownloadRecordExt for DownloadRecord {
 
   fn with_state(&self, new_state: DownloadState) -> DownloadRecord {
       DownloadRecord {
+          progress: if new_state == DownloadState::Completed { 100.0 } else { self.progress },
           state: new_state,
           ..self.clone() // Clone the rest of the fields
       }

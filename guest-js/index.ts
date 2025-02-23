@@ -1,16 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
-class DownloadImpl implements Download {
+export class Download implements DownloadRecord {
    public key: string;
    public url: string;
    public path: string;
    public progress: number;
    public state: DownloadState;
-   public onState?: (state: DownloadState) => void;
-   public onProgress?: (progress: number) => void;
-
-   private _unlisten: UnlistenFn[] = [];
 
    public constructor(record: DownloadRecord) {
       this.key = record.key;
@@ -20,104 +16,60 @@ class DownloadImpl implements Download {
       this.state = record.state;
    }
 
-   public static async create(record: DownloadRecord): Promise<Download> {
-      return new DownloadImpl(record).attach();
-   }
-
+   /**
+   * Starts the download.
+   * @returns A promise with the updated download.
+   */
    public start(): Promise<Download> {
       return invoke('plugin:download|start', { key: this.key });
    }
 
+   /**
+   * Cancels the download.
+   * @returns A promise with the updated download.
+   */
    public cancel(): Promise<Download> {
       return invoke('plugin:download|cancel', { key: this.key });
    }
 
+   /**
+   * Pauses the download.
+   * @returns A promise with the updated download.
+   */
    public pause(): Promise<Download> {
       return invoke('plugin:download|pause', { key: this.key });
    }
 
+   /**
+   * Resumes the download.
+   * @returns A promise with the updated download.
+   */
    public resume(): Promise<Download> {
       return invoke('plugin:download|resume', { key: this.key });
    }
 
-   public async detach(): Promise<void> {
-      console.debug(`Detached listeners for ${this.key}`);
-
-      // Unlisten from all events.
-      for (let i = 0; i < this._unlisten.length; i++) {
-         this._unlisten[i]();
-      }
-   }
-
-   private async attach(): Promise<Download> {
-      console.debug(`Attached listeners for ${this.key}`);
-
-      // Listen for state events.
-      this._unlisten.push(await listen<DownloadEvent>('tauri-plugin-download:state', (event) => {
-         if (event.payload.key === this.key && this.onState) {
-            this.onState(event.payload.state);
+   /**
+   * Listen for changes to the download.
+   * @param onChanged - Callback function invoked when the download has changed.
+   * @returns A promise to remove the download listener.
+   *
+   * @example
+   * ```ts
+   * const unlisten = await listen((download) => {
+   *   console.log('Download:', download);
+   * });
+   *
+   * // To stop listening
+   * unlisten();
+   * ```
+   */
+   public async listen(listener: (download: Download) => void): Promise<UnlistenFn> {
+      return listen<DownloadRecord>('tauri-plugin-download:changed', (event) => {
+         if (event.payload.key === this.key) {
+            listener(new Download(event.payload));
          }
-      }));
-
-      // Listen for progress events.
-      this._unlisten.push(await listen<DownloadEvent>('tauri-plugin-download:progress', (event) => {
-         if (event.payload.key === this.key && event.payload.progress && this.onProgress) {
-            this.onProgress(event.payload.progress);
-         }
-      }));
-
-      return this;
+      });
    }
-}
-
-/**
- * Represents a download operation.
- */
-export interface Download extends DownloadRecord {
-
-  /**
-  * Callback when state is changed.
-  */
-  onState?: (state: DownloadState) => void;
-
-  /**
-  * Callback when progress is changed.
-  */
-  onProgress?: (progress: number) => void;
-
-  /**
-  * Starts the download operation.
-  */
-  start(): Promise<Download>;
-
-  /**
-  * Cancels the download operation.
-  */
-  cancel(): Promise<Download>;
-
-  /**
-  * Pauses the download operation.
-  */
-  pause(): Promise<Download>;
-
-  /**
-  * Resumes the download operation.
-  */
-  resume(): Promise<Download>;
-
-  /**
-  * Detach event listeners.
-  */
-  detach(): Promise<void>;
-}
-
-/**
- * Represents a download event.
- */
-export interface DownloadEvent {
-  key: string;
-  state: DownloadState;
-  progress?: number;
 }
 
 /**
@@ -152,7 +104,7 @@ export enum DownloadState {
  * @returns - The download operation.
  */
 export async function create(key: string, url: string, path: string): Promise<Download> {
-   return await DownloadImpl.create(await invoke<DownloadRecord>('plugin:download|create', { key, url, path }));
+   return new Download(await invoke<DownloadRecord>('plugin:download|create', { key, url, path }));
 }
 
 /**
@@ -161,9 +113,8 @@ export async function create(key: string, url: string, path: string): Promise<Do
  * @returns - The list of download operations.
  */
 export async function list(): Promise<Download[]> {
-   const records = await invoke<DownloadRecord[]>('plugin:download|list');
-
-   return Promise.all(records.map((record) => { return DownloadImpl.create(record); }));
+   return (await invoke<DownloadRecord[]>('plugin:download|list'))
+      .map((record) => { return new Download(record); });
 }
 
 /**
@@ -173,5 +124,5 @@ export async function list(): Promise<Download[]> {
  * @returns - The download operation.
  */
 export async function get(key: string): Promise<Download> {
-   return await DownloadImpl.create(await invoke<DownloadRecord>('plugin:download|get', { key }));
+   return new Download(await invoke<DownloadRecord>('plugin:download|get', { key }));
 }

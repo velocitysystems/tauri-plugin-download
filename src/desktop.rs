@@ -31,7 +31,7 @@ impl<R: Runtime> Download<R> {
   /// - `key` - The key identifier.
   /// - `url` - The download URL  for the resource.
   /// - `path` - The download path on the filesystem.
-  /// 
+  ///
   /// # Returns
   /// The download operation.
   pub fn create(&self, app: AppHandle<R>, key: String, url: String, path: String) -> crate::Result<DownloadRecord> {
@@ -50,7 +50,7 @@ impl<R: Runtime> Download<R> {
   /// # Arguments
   /// - `app` - The application handle.
   /// - `key` - The key identifier.
-  /// 
+  ///
   /// # Returns
   /// The download operation.
   pub fn get(&self, app: AppHandle<R>, key: String) -> crate::Result<DownloadRecord> {
@@ -62,20 +62,20 @@ impl<R: Runtime> Download<R> {
   ///
   /// # Arguments
   /// - `app` - The application handle.
-  /// 
+  ///
   /// # Returns
   /// The list of download operations.
   pub fn list(&self, app: AppHandle<R>) -> crate::Result<Vec<DownloadRecord>> {
     Download::get_records(&app)
   }
-  
+
   ///
   /// Starts a download operation.
   ///
   /// # Arguments
   /// - `app` - The application handle.
   /// - `key` - The key identifier.
-  /// 
+  ///
   /// # Returns
   /// The download operation.
   pub fn start(&self, app: AppHandle<R>, key: String) -> crate::Result<DownloadRecord> {
@@ -102,7 +102,7 @@ impl<R: Runtime> Download<R> {
   /// # Arguments
   /// - `app` - The application handle.
   /// - `key` - The key identifier.
-  /// 
+  ///
   /// # Returns
   /// The download operation.
   pub fn cancel(&self, app: AppHandle<R>, key: String) -> crate::Result<DownloadRecord> {
@@ -115,7 +115,7 @@ impl<R: Runtime> Download<R> {
           println!("[{}] File was not found or could not be deleted", &record.key);
         }
 
-        Download::emit_state(&app, record.key.clone(), DownloadState::Cancelled);
+        Download::emit_changed(&app, record.with_state(DownloadState::Cancelled));
         Ok(record.with_state(DownloadState::Cancelled))
       }
 
@@ -130,7 +130,7 @@ impl<R: Runtime> Download<R> {
   /// # Arguments
   /// - `app` - The application handle.
   /// - `key` - The key identifier.
-  /// 
+  ///
   /// # Returns
   /// The download operation.
   pub fn pause(&self, app: AppHandle<R>, key: String) -> crate::Result<DownloadRecord> {
@@ -138,9 +138,8 @@ impl<R: Runtime> Download<R> {
     match record.state {
       // Allow download to be paused when in progress.
       DownloadState::InProgress => {
-        let record_paused = record.with_state(DownloadState::Paused);
-        Download::update_record(&app, record_paused.clone()).unwrap();
-        Download::emit_state(&app, record.key.clone(), DownloadState::Paused);
+        Download::update_record(&app, record.with_state(DownloadState::Paused)).unwrap();
+        Download::emit_changed(&app, record.with_state(DownloadState::Paused));
         Ok(record.with_state(DownloadState::Paused))
       }
 
@@ -155,7 +154,7 @@ impl<R: Runtime> Download<R> {
   /// # Arguments
   /// - `app` - The application handle.
   /// - `key` - The key identifier.
-  /// 
+  ///
   /// # Returns
   /// The download operation.
   pub fn resume(&self, app: AppHandle<R>, key: String) -> crate::Result<DownloadRecord> {
@@ -234,7 +233,7 @@ impl<R: Runtime> Download<R> {
     let mut stream = response.bytes_stream();
 
     Download::update_record(&app, record.with_state(DownloadState::InProgress)).unwrap();
-    Download::emit_state(&app, record.key.clone(), DownloadState::InProgress);
+    Download::emit_changed(&app, record.with_state(DownloadState::InProgress));
 
     'reader: while let Some(chunk) = stream.next().await {
        match chunk {
@@ -243,20 +242,20 @@ impl<R: Runtime> Download<R> {
               .write_all(&data)
               .map_err(|e| Error::FileError(format!("Failed to write file: {}", e)))?;
 
-            downloaded += data.len() as u64; 
+            downloaded += data.len() as u64;
             let progress = (downloaded as f64 / total_size as f64) * 100.0;
 
             if let Ok(record) = Download::get_record(&app, record.key.clone()) {
               match record.state {
                 // Download is in progress.
                 DownloadState::InProgress => {
-                  if progress < 100.0 {                    
+                  if progress < 100.0 {
                     Download::update_record(app, record.with_progress(progress)).unwrap();
-                    Download::emit_progress(&app, record.key.clone(), progress);
+                    Download::emit_changed(&app, record.with_progress(progress));
                   }
                   else if progress == 100.0 {
                     Download::remove_record(&app, record.key.clone()).unwrap();
-                    Download::emit_state(&app, record.key, DownloadState::Completed);
+                    Download::emit_changed(&app, record.with_state(DownloadState::Completed));
                   }
                 },
                 // Download was paused.
@@ -279,14 +278,9 @@ impl<R: Runtime> Download<R> {
     Ok(())
   }
 
-  fn emit_state(app: &AppHandle<R>, key: String, state: DownloadState) {
-    app.emit("tauri-plugin-download:state", DownloadEvent { key: key.clone(), progress: None, state: state.clone() }).unwrap();
-    println!("[{}] State: {}", key, state.to_string());
-  }
-
-  fn emit_progress(app: &AppHandle<R>, key: String, progress: f64) {
-    app.emit("tauri-plugin-download:progress", DownloadEvent { key: key.clone(), progress: Some(progress), state: DownloadState::InProgress }).unwrap();
-    println!("[{}] Progress: {}", key, progress.to_string());
+  fn emit_changed(app: &AppHandle<R>, record: DownloadRecord) {
+    app.emit("tauri-plugin-download:changed", &record).unwrap();
+    println!("[{}] {} ({})", record.key, record.state.to_string(), record.progress.to_string());
   }
 
   fn update_record(app: &AppHandle<R>, record: DownloadRecord) -> crate::Result<()> {
@@ -319,7 +313,7 @@ impl<R: Runtime> Download<R> {
 
     Ok(record)
   }
-  
+
   fn get_records(app: &AppHandle<R>) -> crate::Result<Vec<DownloadRecord>> {
     let store = app
       .store("downloads.json")
@@ -349,7 +343,7 @@ impl<R: Runtime> Download<R> {
       None => Err(Error::StoreError(format!("No download record found for key: {}", key))),
     }
   }
- 
+
   fn remove_record(app: &AppHandle<R>, key: String) -> crate::Result<()> {
     let store = app
       .store("downloads.json")
