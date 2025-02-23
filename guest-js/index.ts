@@ -20,43 +20,45 @@ export class Download implements DownloadRecord {
    * Starts the download.
    * @returns A promise with the updated download.
    */
-   public start(): Promise<Download> {
-      return invoke('plugin:download|start', { key: this.key });
+   public async start(): Promise<Download> {
+      return new Download(await invoke('plugin:download|start', { key: this.key }));
    }
 
    /**
    * Cancels the download.
    * @returns A promise with the updated download.
    */
-   public cancel(): Promise<Download> {
-      return invoke('plugin:download|cancel', { key: this.key });
+   public async cancel(): Promise<Download> {
+      return new Download(await invoke('plugin:download|cancel', { key: this.key }));
    }
 
    /**
    * Pauses the download.
    * @returns A promise with the updated download.
    */
-   public pause(): Promise<Download> {
-      return invoke('plugin:download|pause', { key: this.key });
+   public async pause(): Promise<Download> {
+      return new Download(await invoke('plugin:download|pause', { key: this.key }));
    }
 
    /**
    * Resumes the download.
    * @returns A promise with the updated download.
    */
-   public resume(): Promise<Download> {
-      return invoke('plugin:download|resume', { key: this.key });
+   public async resume(): Promise<Download> {
+      return new Download(await invoke('plugin:download|resume', { key: this.key }));
    }
 
    /**
    * Listen for changes to the download.
+   * To avoid memory leaks, the `unlisten` function returned by the promise
+   * should be called when no longer required.
    * @param onChanged - Callback function invoked when the download has changed.
-   * @returns A promise to remove the download listener.
+   * @returns A promise with a function to remove the download listener.
    *
    * @example
    * ```ts
-   * const unlisten = await listen((download) => {
-   *   console.log('Download:', download);
+   * const unlisten = await download.listen((updatedDownload) => {
+   *   console.log('Download:', updatedDownload);
    * });
    *
    * // To stop listening

@@ -48,19 +48,19 @@ onMounted(async () => {
 onUnmounted(() => { return unlisten(); });
 
 async function startDownload() {
-   download.value = await download.value.start();
+   await props.model.start();
 }
 
 async function cancelDownload() {
-   download.value = await download.value.cancel();
+   await props.model.cancel();
 }
 
 async function pauseDownload() {
-   download.value = await download.value.pause();
+   await props.model.pause();
 }
 
 async function resumeDownload() {
-   download.value = await download.value.resume();
+   await props.model.resume();
 }
 </script>
 

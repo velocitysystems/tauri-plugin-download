@@ -16,7 +16,7 @@
       <p>Enter a URL to download and click <em>Create.</em></p>
       <!-- Create Download -->
       <form class="row" @submit.prevent>
-         <input id="url-input" v-model="downloadUrl" placeholder="https://foo.com/sample.zip">
+         <input id="url-input" v-model="downloadURL" placeholder="https://foo.com/sample.zip">
          <button type="button" @click="createDownload">Create</button>
       </form>
       <!-- Manage Downloads -->
@@ -32,7 +32,7 @@ import { appDataDir, join } from '@tauri-apps/api/path';
 import { create, list, Download } from 'tauri-plugin-download-api';
 import DownloadView from './DownloadView.vue';
 
-const downloadUrl = ref(''),
+const downloadURL = ref(''),
       downloads = ref<Download[]>();
 
 onMounted(async () => {
@@ -40,16 +40,16 @@ onMounted(async () => {
 });
 
 async function createDownload() {
-   const key = getFilenameFromUrl(downloadUrl.value)!,
+   const key = getFilenameFromURL(downloadURL.value)!,
          path = await join(await appDataDir(), 'downloads', key);
 
-   const download = await create(key, downloadUrl.value, path);
+   const download = await create(key, downloadURL.value, path);
 
    downloads.value?.push(download);
-   downloadUrl.value = '';
+   downloadURL.value = '';
 }
 
-function getFilenameFromUrl(url: string): string | null {
+function getFilenameFromURL(url: string): string | null {
    try {
       const urlObject = new URL(url),
             pathname = urlObject.pathname,

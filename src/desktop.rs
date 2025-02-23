@@ -232,8 +232,12 @@ impl<R: Runtime> Download<R> {
     let mut downloaded = downloaded_size;
     let mut stream = response.bytes_stream();
 
-    Download::update_record(&app, record.with_state(DownloadState::InProgress)).unwrap();
-    Download::emit_changed(&app, record.with_state(DownloadState::InProgress));
+    // Throttle progress updates.
+    let mut last_emitted_progress = 0.0;
+    const PROGRESS_THRESHOLD: f64 = 1.0;  // Only update if progress increases by at least 1%.
+
+    Download::update_record(app, record.with_state(DownloadState::InProgress)).unwrap();
+    Download::emit_changed(app, record.with_state(DownloadState::InProgress));
 
     'reader: while let Some(chunk) = stream.next().await {
        match chunk {
@@ -244,18 +248,24 @@ impl<R: Runtime> Download<R> {
 
             downloaded += data.len() as u64;
             let progress = (downloaded as f64 / total_size as f64) * 100.0;
+            if progress < 100.0 && progress - last_emitted_progress <= PROGRESS_THRESHOLD
+            {
+               // Ignore any progress updates below the threshold.
+               continue;
+            }
 
-            if let Ok(record) = Download::get_record(&app, record.key.clone()) {
+            last_emitted_progress = progress;
+            if let Ok(record) = Download::get_record(app, record.key.clone()) {
               match record.state {
                 // Download is in progress.
                 DownloadState::InProgress => {
                   if progress < 100.0 {
                     Download::update_record(app, record.with_progress(progress)).unwrap();
-                    Download::emit_changed(&app, record.with_progress(progress));
+                    Download::emit_changed(app, record.with_progress(progress));
                   }
                   else if progress == 100.0 {
-                    Download::remove_record(&app, record.key.clone()).unwrap();
-                    Download::emit_changed(&app, record.with_state(DownloadState::Completed));
+                    Download::remove_record(app, record.key.clone()).unwrap();
+                    Download::emit_changed(app, record.with_state(DownloadState::Completed));
                   }
                 },
                 // Download was paused.
@@ -280,7 +290,7 @@ impl<R: Runtime> Download<R> {
 
   fn emit_changed(app: &AppHandle<R>, record: DownloadRecord) {
     app.emit("tauri-plugin-download:changed", &record).unwrap();
-    println!("[{}] {} ({})", record.key, record.state.to_string(), record.progress.to_string());
+    println!("[{}] {} - {:.0}%", record.key, record.state, record.progress);
   }
 
   fn update_record(app: &AppHandle<R>, record: DownloadRecord) -> crate::Result<()> {
