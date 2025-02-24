@@ -21,9 +21,9 @@ pub enum Error {
 
    #[error(transparent)]
    Io(#[from] std::io::Error),
-   #[cfg(mobile)]
-   #[error(transparent)]
-   PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
+   //#[cfg(mobile)]
+   //#[error(transparent)]
+   //PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
 }
 
 impl Serialize for Error {

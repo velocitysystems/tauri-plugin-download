@@ -5,10 +5,10 @@ use tauri::{
 
 pub use models::*;
 
-#[cfg(desktop)]
+//#[cfg(desktop)]
 mod desktop;
-#[cfg(mobile)]
-mod mobile;
+//#[cfg(mobile)]
+//mod mobile;
 
 mod commands;
 mod error;
@@ -17,10 +17,10 @@ mod store;
 
 pub use error::{Error, Result};
 
-#[cfg(desktop)]
+//#[cfg(desktop)]
 use desktop::Download;
-#[cfg(mobile)]
-use mobile::Download;
+//#[cfg(mobile)]
+//use mobile::Download;
 use tauri_plugin_store::StoreExt;
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`] to access the download APIs.
@@ -47,9 +47,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          commands::resume
       ])
       .setup(|app, api| {
-         #[cfg(mobile)]
-         let download = mobile::init(app, api)?;
-         #[cfg(desktop)]
+         //#[cfg(mobile)]
+         //let download = mobile::init(app, api)?;
+         //#[cfg(desktop)]
          let download = desktop::init(app, api)?;
          app.manage(download);
 
