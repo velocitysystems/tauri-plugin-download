@@ -1,64 +1,66 @@
 <template>
-  <main class="container">
-    <h1>tauri-plugin-download</h1>
+   <main class="container">
+      <h1>tauri-plugin-download</h1>
 
-    <div class="row">
-      <a href="https://vitejs.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
-    </div>
-    <p>Enter a URL to download and click <em>Create.</em></p>
-    <!-- Create Download -->
-    <form class="row" @submit.prevent>
-      <input id="url-input" v-model="url" placeholder="https://foo.com/sample.zip" />
-      <button @click="createDownload">Create</button>
-    </form>
-    <!-- Manage Downloads -->
-    <div class="download-list">
-      <DownloadView v-for="download in downloads" :model="download" />
-    </div>
-  </main>
+      <div class="row">
+         <a href="https://vitejs.dev" target="_blank">
+            <img src="/vite.svg" class="logo vite" alt="Vite logo">
+         </a>
+         <a href="https://tauri.app" target="_blank">
+            <img src="/tauri.svg" class="logo tauri" alt="Tauri logo">
+         </a>
+         <a href="https://vuejs.org/" target="_blank">
+            <img src="./assets/vue.svg" class="logo vue" alt="Vue logo">
+         </a>
+      </div>
+      <p>Enter a URL to download and click <em>Create.</em></p>
+      <!-- Create Download -->
+      <form class="row" @submit.prevent>
+         <input id="url-input" v-model="downloadURL" placeholder="https://foo.com/sample.zip">
+         <button type="button" @click="createDownload">Create</button>
+      </form>
+      <!-- Manage Downloads -->
+      <div class="download-list">
+         <DownloadView v-for="download in downloads" :key="download.key" :model="download" />
+      </div>
+   </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { appDataDir, join  } from '@tauri-apps/api/path';
-import { create, list, Download } from 'tauri-plugin-download-api'
-import DownloadView from "./DownloadView.vue";
+import { onMounted, ref } from 'vue';
+import { appDataDir, join } from '@tauri-apps/api/path';
+import { create, list, Download } from 'tauri-plugin-download-api';
+import DownloadView from './DownloadView.vue';
 
-const url = ref(""),
+const downloadURL = ref(''),
       downloads = ref<Download[]>();
 
 onMounted(async () => {
-  downloads.value = await list();
-})
+   downloads.value = await list();
+});
 
 async function createDownload() {
-  const key = getFilenameFromUrl(url.value)!,
-        path = await join(await appDataDir(), 'downloads', key);
+   const key = getFilenameFromURL(downloadURL.value)!,
+         path = await join(await appDataDir(), 'downloads', key);
 
-  const download = await create(key, url.value, path);
-  downloads.value?.push(download);  
-  url.value = '';
+   const download = await create(key, downloadURL.value, path);
+
+   downloads.value?.push(download);
+   downloadURL.value = '';
 }
 
-function getFilenameFromUrl(url: string): string | null {
-    try {
-        const urlObject = new URL(url);
-        const pathname = urlObject.pathname;
-        const filename = pathname.substring(pathname.lastIndexOf('/') + 1);
-        return filename;
-    } catch (error) {
-        // Handle cases where the URL is invalid
-        console.error("Invalid URL:", error);
-        return null;
-    }
+function getFilenameFromURL(url: string): string | null {
+   try {
+      const urlObject = new URL(url),
+            pathname = urlObject.pathname,
+            filename = pathname.substring(pathname.lastIndexOf('/') + 1);
+
+      return filename;
+   } catch(error) {
+      // Handle cases where the URL is invalid
+      console.error('Invalid URL:', error);
+      return null;
+   }
 }
 </script>
 
@@ -76,7 +78,6 @@ function getFilenameFromUrl(url: string): string | null {
 .logo.vue:hover {
   filter: drop-shadow(0 0 2em #249b73);
 }
-
 </style>
 <style>
 :root {
@@ -188,5 +189,4 @@ button {
     background-color: #0f0f0f69;
   }
 }
-
 </style>

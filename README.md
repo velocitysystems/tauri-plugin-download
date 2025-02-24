@@ -12,7 +12,7 @@ State-driven, resumable download API.
 
 ## Contributing
 
-PRs accepted. Please make sure to read the Contributing Guide before making a pull request.
+PRs accepted. Please read the Contributing Guide before making a pull request.
 
 ## License
 
