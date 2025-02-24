@@ -1,6 +1,5 @@
 use tauri::{
-   plugin::{Builder, TauriPlugin},
-   Manager, Runtime,
+   plugin::{Builder, TauriPlugin}, Manager, RunEvent, Runtime
 };
 
 pub use models::*;
@@ -14,6 +13,7 @@ mod commands;
 mod error;
 mod models;
 mod store;
+mod utils;
 
 pub use error::{Error, Result};
 
@@ -53,7 +53,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          let download = desktop::init(app, api)?;
          app.manage(download);
 
-         // Dynamically register/initialize the store plugin.
+         // Initialize the store plugin.
          // https://docs.rs/tauri/latest/tauri/struct.AppHandle.html#method.plugin
          let handle = app.app_handle().clone();
          std::thread::spawn(move || {
@@ -64,6 +64,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          });
 
          Ok(())
-      })
+      }).on_event(|app_handle, event| {
+         match event {
+            RunEvent::Ready => {
+               // Initialize the download plugin.
+               app_handle.state::<Download<R>>().init();
+            },
+            _ => {}
+         }
+     })
       .build()
 }

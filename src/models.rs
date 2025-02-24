@@ -25,11 +25,19 @@ pub enum DownloadState {
 }
 
 pub trait DownloadRecordExt {
+   fn with_path(&self, new_path: String) -> DownloadRecord;
    fn with_progress(&self, new_progress: f64) -> DownloadRecord;
    fn with_state(&self, new_state: DownloadState) -> DownloadRecord;
 }
 
 impl DownloadRecordExt for DownloadRecord {
+   fn with_path(&self, new_path: String) -> DownloadRecord {
+      DownloadRecord {
+         path: new_path,
+         ..self.clone() // Clone the rest of the fields
+      }
+   }
+
    fn with_progress(&self, new_progress: f64) -> DownloadRecord {
       DownloadRecord {
          progress: new_progress,
