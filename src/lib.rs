@@ -4,23 +4,16 @@ use tauri::{
 
 pub use models::*;
 
-//#[cfg(desktop)]
-mod desktop;
-//#[cfg(mobile)]
-//mod mobile;
-
 mod commands;
 mod error;
 mod models;
+mod shared;
 mod store;
 mod utils;
 
 pub use error::{Error, Result};
 
-//#[cfg(desktop)]
-use desktop::Download;
-//#[cfg(mobile)]
-//use mobile::Download;
+use shared::Download;
 use tauri_plugin_store::StoreExt;
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`] to access the download APIs.
@@ -47,10 +40,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          commands::resume
       ])
       .setup(|app, api| {
-         //#[cfg(mobile)]
-         //let download = mobile::init(app, api)?;
-         //#[cfg(desktop)]
-         let download = desktop::init(app, api)?;
+         let download = shared::init(app, api)?;
          app.manage(download);
 
          // Initialize the store plugin.
@@ -65,12 +55,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 
          Ok(())
       }).on_event(|app_handle, event| {
-         match event {
-            RunEvent::Ready => {
-               // Initialize the download plugin.
-               app_handle.state::<Download<R>>().init();
-            },
-            _ => {}
+         if let RunEvent::Ready = event {
+            // Initialize the download plugin.
+            app_handle.state::<Download<R>>().init();
          }
      })
       .build()
