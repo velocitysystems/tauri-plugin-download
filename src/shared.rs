@@ -8,8 +8,10 @@ use tauri::{plugin::PluginApi, Emitter, Runtime};
 use tauri_plugin_http::reqwest;
 use tauri_plugin_http::reqwest::header::{HeaderMap, RANGE};
 
-use crate::{models::*, store};
+use crate::{models::*, store, utils};
 use crate::Error;
+
+static DOWNLOAD_SUFFIX: &str = ".download";
 
 pub fn init<R: Runtime, C: DeserializeOwned>(
    app: &AppHandle<R>,
@@ -22,6 +24,31 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct Download<R: Runtime>(AppHandle<R>);
 
 impl<R: Runtime> Download<R> {
+   ///
+   /// Initializes the API.
+   /// Updates the state of any download operations which are still marked as "In Progress". This can occur if the
+   /// application was suspended or terminated before a download was completed.
+   ///
+   pub fn init(&self)
+   {
+      let records: Vec<_> = store::get_records(&self.0)
+         .unwrap()
+         .iter()
+         .filter(|item| item.state == DownloadState::InProgress)
+         .cloned()
+         .collect();
+
+      records.into_iter().for_each(|record| {
+         let new_state = if record.progress == 0.0 { DownloadState::Created } else { DownloadState::Paused };
+         store::update_record(&self.0, record.with_state(new_state.clone())).unwrap();
+         println!(
+            "[{}] Found download operation - {}",
+            &record.key,
+            new_state
+         );
+      });
+   }
+
    ///
    /// Creates a download operation.
    ///
@@ -40,6 +67,7 @@ impl<R: Runtime> Download<R> {
       url: String,
       path: String,
    ) -> crate::Result<DownloadRecord> {
+      let path = format!("{}{}", path, DOWNLOAD_SUFFIX);
       store::create_record(
          &app,
          DownloadRecord {
@@ -275,11 +303,20 @@ impl<R: Runtime> Download<R> {
                      // Download is in progress.
                      DownloadState::InProgress => {
                         if progress < 100.0 {
+                           // Download is not yet complete.
+                           // Update record in store and emit change event.
                            store::update_record(app, record.with_progress(progress)).unwrap();
                            Download::emit_changed(app, record.with_progress(progress));
                         } else if progress == 100.0 {
+                           // Download has completed.
+                           // Remove record from store, rename output file and emit change event.
                            store::remove_record(app, record.key.clone()).unwrap();
-                           Download::emit_changed(app, record.with_state(DownloadState::Completed));
+
+                           let output_path = utils::remove_suffix(&record.path, DOWNLOAD_SUFFIX);
+                           fs::rename(&record.path, output_path)?;
+                           Download::emit_changed(app, record
+                              .with_path(output_path.into())
+                              .with_state(DownloadState::Completed));
                         }
                      }
                      // Download was paused.
@@ -289,12 +326,20 @@ impl<R: Runtime> Download<R> {
                      _ => (),
                   }
                } else {
-                  // Download was removed.
-                  println!("[{}] Download was removed", &record.key);
+                  // Download record was not found i.e. removed.
                   break 'reader;
                }
             }
-            Err(e) => return Err(Error::HttpError(format!("Failed to download: {}", e))),
+            Err(e) => {
+               // Download error occured.
+               // Remove record from store and partial download.
+               store::remove_record(app, record.key.clone()).unwrap();
+               if std::path::Path::new(&record.path).exists() {
+                  fs::remove_file(&record.path)?;
+               }
+
+               return Err(Error::HttpError(format!("Failed to download: {}", e)))
+            },
          }
       }
 
