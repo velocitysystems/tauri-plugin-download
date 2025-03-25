@@ -1,5 +1,5 @@
 {
-  "name": "tauri-plugin-download-api",
+  "name": "tauri-plugin-download",
   "version": "0.1.0",
   "author": "You",
   "description": "",
@@ -24,7 +24,8 @@
     "commitlint": "commitlint --from 3521760",
     "eslint": "eslint .",
     "markdownlint": "markdownlint-cli2",
-    "standards": "npm run commitlint && npm run eslint && npm run markdownlint"
+    "standards": "npm run commitlint && npm run eslint && npm run markdownlint",
+    "prepare": "pnpm build"
   },
   "dependencies": {
     "@tauri-apps/api": ">=2.0.0-beta.6"
