@@ -8,8 +8,8 @@ use tauri::{plugin::PluginApi, Emitter, Runtime};
 use tauri_plugin_http::reqwest;
 use tauri_plugin_http::reqwest::header::{HeaderMap, RANGE};
 
-use crate::{models::*, store, utils};
 use crate::Error;
+use crate::{models::*, store, utils};
 
 static DOWNLOAD_SUFFIX: &str = ".download";
 
@@ -29,8 +29,7 @@ impl<R: Runtime> Download<R> {
    /// Updates the state of any download operations which are still marked as "In Progress". This can occur if the
    /// application was suspended or terminated before a download was completed.
    ///
-   pub fn init(&self)
-   {
+   pub fn init(&self) {
       let records: Vec<_> = store::get_records(&self.0)
          .unwrap()
          .iter()
@@ -39,13 +38,13 @@ impl<R: Runtime> Download<R> {
          .collect();
 
       records.into_iter().for_each(|record| {
-         let new_state = if record.progress == 0.0 { DownloadState::Created } else { DownloadState::Paused };
+         let new_state = if record.progress == 0.0 {
+            DownloadState::Created
+         } else {
+            DownloadState::Paused
+         };
          store::update_record(&self.0, record.with_state(new_state.clone())).unwrap();
-         println!(
-            "[{}] Found download operation - {}",
-            &record.key,
-            new_state
-         );
+         println!("[{}] Found download operation - {}", &record.key, new_state);
       });
    }
 
@@ -239,13 +238,13 @@ impl<R: Runtime> Download<R> {
       let response = match client.get(&record.url).headers(headers).send().await {
          Ok(res) => res,
          Err(e) => {
-            return Err(Error::HttpError(format!("Failed to send request: {}", e)));
+            return Err(Error::Http(format!("Failed to send request: {}", e)));
          }
       };
 
       // Ensure the server supports partial downloads.
       if downloaded_size > 0 && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-         return Err(Error::HttpError(
+         return Err(Error::Http(
             "Server does not support partial downloads".to_string(),
          ));
       }
@@ -270,7 +269,7 @@ impl<R: Runtime> Download<R> {
          .create(true)
          .append(true)
          .open(&record.path)
-         .map_err(|e| Error::FileError(format!("Failed to open file: {}", e)))?;
+         .map_err(|e| Error::File(format!("Failed to open file: {}", e)))?;
 
       // Write the response body to the file in chunks.
       let mut downloaded = downloaded_size;
@@ -288,7 +287,7 @@ impl<R: Runtime> Download<R> {
             Ok(data) => {
                file
                   .write_all(&data)
-                  .map_err(|e| Error::FileError(format!("Failed to write file: {}", e)))?;
+                  .map_err(|e| Error::File(format!("Failed to write file: {}", e)))?;
 
                downloaded += data.len() as u64;
                let progress = (downloaded as f64 / total_size as f64) * 100.0;
@@ -314,9 +313,12 @@ impl<R: Runtime> Download<R> {
 
                            let output_path = utils::remove_suffix(&record.path, DOWNLOAD_SUFFIX);
                            fs::rename(&record.path, output_path)?;
-                           Download::emit_changed(app, record
-                              .with_path(output_path.into())
-                              .with_state(DownloadState::Completed));
+                           Download::emit_changed(
+                              app,
+                              record
+                                 .with_path(output_path.into())
+                                 .with_state(DownloadState::Completed),
+                           );
                         }
                      }
                      // Download was paused.
@@ -338,8 +340,8 @@ impl<R: Runtime> Download<R> {
                   fs::remove_file(&record.path)?;
                }
 
-               return Err(Error::HttpError(format!("Failed to download: {}", e)))
-            },
+               return Err(Error::Http(format!("Failed to download: {}", e)));
+            }
          }
       }
 

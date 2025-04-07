@@ -1,5 +1,6 @@
 use tauri::{
-   plugin::{Builder, TauriPlugin}, Manager, RunEvent, Runtime
+   plugin::{Builder, TauriPlugin},
+   Manager, RunEvent, Runtime,
 };
 
 pub use models::*;
@@ -54,11 +55,12 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          });
 
          Ok(())
-      }).on_event(|app_handle, event| {
+      })
+      .on_event(|app_handle, event| {
          if let RunEvent::Ready = event {
             // Initialize the download plugin.
             app_handle.state::<Download<R>>().init();
          }
-     })
+      })
       .build()
 }
