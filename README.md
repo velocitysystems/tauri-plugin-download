@@ -17,7 +17,7 @@ State-driven, resumable download API for Tauri 2.x apps.
 
 ## Installation
 
-Note: These steps are an interim workaround until the plugin can be published to npm/crates.io.
+Note: These steps are an interim workaround until the plugin is published.
 
 ### Rust
 
@@ -38,7 +38,7 @@ npm install github:@silvermine/tauri-plugin-download
 
 ## Usage
 
-### Rust
+### Prerequisites
 
 Initialize the plugin in your `tauri::Builder`:
 
@@ -51,32 +51,34 @@ fn main() {
 }
 ```
 
-### TypeScript
+### API
 
 #### Create a download
 
 ```ts
-import { create } from "tauri-plugin-download";
+import { create } from 'tauri-plugin-download';
 
 async function createDownload() {
-   const key = "file.zip";
-   const url = "https://example.com/file.zip";
-   const path = "/path/to/save/file.zip";
+   const key = 'file.zip',
+         url = 'https://example.com/file.zip',
+         path = await join(await appDataDir(), 'downloads', key);
 
    const download = await create(key, url, path);
-   console.log(`Created '${download.key}':${download.url}`)
+
+   console.debug(`Created '${download.key}':${download.url}`);
 }
 ```
 
 #### List downloads
 
 ```ts
-import { list } from "tauri-plugin-download";
+import { list } from 'tauri-plugin-download';
 
 async function listDownloads() {
    const downloads = await list();
+
    for (let download of downloads) {
-      console.log(`Found '${download.key}':${download.url} [${download.state}, ${download.progress}%]`)
+      console.debug(`Found '${download.key}':${download.url} [${download.state}, ${download.progress}%]`)
    }
 }
 ```
@@ -84,37 +86,40 @@ async function listDownloads() {
 #### Get a download
 
 ```ts
-import { get } from "tauri-plugin-download";
+import { get } from 'tauri-plugin-download';
 
 async function getDownload() {
-   const download = await get("file.zip");
-   console.log(`Found '${download.key}':${download.url} [${download.state}, ${download.progress}%]`)
+   const download = await get('file.zip');
+
+   console.debug(`Found '${download.key}':${download.url} [${download.state}, ${download.progress}%]`)
 }
 ```
 
 #### Start, pause, resume or cancel a download
 
 ```ts
-import { get } from "tauri-plugin-download";
+import { get } from 'tauri-plugin-download';
 
 async function getDownloadAndUpdate() {
-   const download = await get("file.zip");
-   download.start();   // Start download
-   download.pause();   // Pause download
-   download.resume();  // Resume download
-   download.cancel();  // Cancel download
+   const download = await get('file.zip');
+
+   download.start();
+   download.pause();
+   download.resume();
+   download.cancel();
 }
 ```
 
 #### Listen for progress notifications
 
 ```ts
-import { get } from "tauri-plugin-download";
+import { get } from 'tauri-plugin-download';
 
 async function getDownloadAndListen() {
-   const download = await get("file.zip");
+   const download = await get('file.zip');
+
    const unlisten = await download.listen((updatedDownload) => {
-      console.log(`'${download.key}':${download.progress}%`)
+      console.debug(`'${updatedDownload.key}':${updatedDownload.progress}%`);
    });
 
    // To stop listening
@@ -124,7 +129,8 @@ async function getDownloadAndListen() {
 
 ### Examples
 
-Check out the [examples/tauri-app](examples/tauri-app) directory for a working example of how to use this plugin.
+Check out the [examples/tauri-app](examples/tauri-app) directory for a working example of
+how to use this plugin.
 
 ## How do I contribute?
 
