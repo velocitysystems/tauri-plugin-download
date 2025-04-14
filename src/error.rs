@@ -8,16 +8,13 @@ pub enum Error {
    InvalidState,
 
    #[error("Store Error: {0}")]
-   StoreError(String),
+   Store(String),
 
    #[error("File Error: {0}")]
-   FileError(String),
+   File(String),
 
    #[error("HTTP Error: {0}")]
-   HttpError(String),
-
-   #[error("Event Error: {0}")]
-   EventError(String),
+   Http(String),
 
    #[error(transparent)]
    Io(#[from] std::io::Error),

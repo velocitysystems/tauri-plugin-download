@@ -1,7 +1,7 @@
 {
-  "name": "tauri-plugin-download-api",
-  "version": "0.1.0",
-  "author": "You",
+  "name": "tauri-plugin-download",
+  "version": "1.0.0",
+  "author": "Jeremy Thomerson",
   "description": "",
   "type": "module",
   "types": "./dist-js/index.d.ts",
@@ -18,16 +18,17 @@
   ],
   "scripts": {
     "build": "rollup -c",
-    "prepublishOnly": "pnpm build",
-    "pretest": "pnpm build",
     "check-node-version": "check-node-version --npm 10.5.0",
     "commitlint": "commitlint --from 3521760",
     "eslint": "eslint .",
     "markdownlint": "markdownlint-cli2",
-    "standards": "npm run commitlint && npm run eslint && npm run markdownlint"
+    "standards": "npm run commitlint && npm run eslint && npm run markdownlint",
+    "rust:lint": "cargo clippy --all-targets --all-features -- -D warnings",
+    "rust:fix": "cargo fmt --all",
+    "prepare": "rollup -c"
   },
   "dependencies": {
-    "@tauri-apps/api": ">=2.0.0-beta.6"
+    "@tauri-apps/api": ">=2.0.0"
   },
   "devDependencies": {
     "@silvermine/eslint-config": "github:silvermine/eslint-config-silvermine#9dc1394edb2a6a3cb27cb5345a9e55e4ee5d08a3",
