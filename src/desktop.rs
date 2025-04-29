@@ -9,7 +9,7 @@ use tauri_plugin_http::reqwest;
 use tauri_plugin_http::reqwest::header::{HeaderMap, RANGE};
 
 use crate::Error;
-use crate::{models::*, store, utils};
+use crate::{models::*, store};
 
 static DOWNLOAD_SUFFIX: &str = ".download";
 
@@ -311,7 +311,12 @@ impl<R: Runtime> Download<R> {
                            // Remove record from store, rename output file and emit change event.
                            store::remove_record(app, record.key.clone()).unwrap();
 
-                           let output_path = utils::remove_suffix(&record.path, DOWNLOAD_SUFFIX);
+                           // Remove suffix from output path.
+                           let output_path = match record.path.strip_suffix(DOWNLOAD_SUFFIX) {
+                              Some(s) => s,
+                              None => &record.path,
+                           };
+
                            fs::rename(&record.path, output_path)?;
                            Download::emit_changed(
                               app,

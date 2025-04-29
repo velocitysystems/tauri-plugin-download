@@ -3,19 +3,24 @@ use tauri::{
    Manager, RunEvent, Runtime,
 };
 
+pub use error::{Error, Result};
 pub use models::*;
+use tauri_plugin_store::StoreExt;
 
 mod commands;
 mod error;
 mod models;
-mod shared;
 mod store;
-mod utils;
 
-pub use error::{Error, Result};
+#[cfg(any(desktop, target_os = "android"))]
+mod desktop;
+#[cfg(any(desktop, target_os = "android"))]
+use desktop::Download;
 
-use shared::Download;
-use tauri_plugin_store::StoreExt;
+#[cfg(target_os = "ios")]
+mod mobile;
+#[cfg(target_os = "ios")]
+use mobile::Download;
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`] to access the download APIs.
 pub trait DownloadExt<R: Runtime> {
@@ -41,7 +46,12 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          commands::resume
       ])
       .setup(|app, api| {
-         let download = shared::init(app, api)?;
+         #[cfg(any(desktop, target_os = "android"))]
+         let download = desktop::init(app, api)?;
+
+         #[cfg(target_os = "ios")]
+         let download = mobile::init(app, api)?;
+
          app.manage(download);
 
          // Initialize the store plugin.

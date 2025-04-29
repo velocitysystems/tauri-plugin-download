@@ -2,6 +2,20 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRequest {
+  pub key: String,
+  pub url: String,
+  pub path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetRequest {
+  pub key: String
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadRecord {
