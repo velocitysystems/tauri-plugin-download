@@ -23,6 +23,7 @@ class DownloadPlugin: Plugin {
       super.init()
       downloadManager.downloadItemChanged
          .sink { download in
+            try? self.trigger("changed", data: download);
             Logger.debug("[\(download.key)] \(download.state) - \(String(format: "%.0f", download.progress))%")
          }
          .store(in: &cancellables)

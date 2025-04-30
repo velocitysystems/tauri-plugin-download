@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { addPluginListener } from '@tauri-apps/api/core';
 
 export class Download implements DownloadRecord {
    public key: string;
@@ -66,11 +67,22 @@ export class Download implements DownloadRecord {
    * ```
    */
    public async listen(listener: (download: Download) => void): Promise<UnlistenFn> {
-      return listen<DownloadRecord>('tauri-plugin-download:changed', (event) => {
+      const eventUnlistenFn = await listen<DownloadRecord>('tauri-plugin-download:changed', (event) => {
          if (event.payload.key === this.key) {
             listener(new Download(event.payload));
          }
       });
+
+      const pluginListener = await addPluginListener('download', 'changed', (event: DownloadRecord) => {
+         if (event.key === this.key) {
+            listener(new Download(event));
+         }
+      });
+
+      return () => {
+         eventUnlistenFn();
+         pluginListener.unregister();
+      };
    }
 }
 
