@@ -27,7 +27,7 @@ pub struct DownloadRecord {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(rename_all = "camelCase")]
 pub enum DownloadState {
    #[default]
    Unknown,

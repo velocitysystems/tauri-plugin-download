@@ -6,8 +6,8 @@ import PackageDescription
 let package = Package(
     name: "tauri-plugin-download",
     platforms: [
-        .macOS(.v10_13),
-        .iOS(.v13),
+        .macOS(.v10_15),
+        .iOS(.v14),
     ],
     products: [
         // Products define the executables and libraries a package produces, and make them visible to other packages.
@@ -17,6 +17,7 @@ let package = Package(
             targets: ["tauri-plugin-download"]),
     ],
     dependencies: [
+        .package(name: "DownloadManagerKit", path: "../ios-src/DownloadManagerKit"),
         .package(name: "Tauri", path: "../.tauri/tauri-api")
     ],
     targets: [
@@ -25,6 +26,7 @@ let package = Package(
         .target(
             name: "tauri-plugin-download",
             dependencies: [
+                .byName(name: "DownloadManagerKit"),
                 .byName(name: "Tauri")
             ],
             path: "Sources")

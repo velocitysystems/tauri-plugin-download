@@ -42,6 +42,15 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
       
       return item
    }
+    
+   public func get(key: String) throws -> DownloadItem {
+       guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey }
+       return item
+   }
+    
+   public func list() -> [DownloadItem] {
+       return downloads
+   }
    
    public func start(key: String) throws -> DownloadItem {
       guard let session = session else { throw DownloadError.sessionNotFound }

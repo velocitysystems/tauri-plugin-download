@@ -89,12 +89,12 @@ export interface DownloadRecord {
 * Represents the state of a download operation.
 */
 export enum DownloadState {
-  UNKNOWN = 'UNKNOWN',
-  CREATED = 'CREATED',
-  IN_PROGRESS = 'IN_PROGRESS',
-  PAUSED = 'PAUSED',
-  CANCELLED = 'CANCELLED',
-  COMPLETED = 'COMPLETED'
+  UNKNOWN = 'unknown',
+  CREATED = 'created',
+  IN_PROGRESS = 'inProgress',
+  PAUSED = 'paused',
+  CANCELLED = 'cancelled',
+  COMPLETED = 'completed'
 }
 
 /**
