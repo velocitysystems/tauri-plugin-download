@@ -3,19 +3,20 @@ use tauri::{
    Manager, RunEvent, Runtime,
 };
 
-pub use error::{Error, Result};
-pub use models::*;
+use error::{Error, Result};
+use models::*;
 use tauri_plugin_store::StoreExt;
 
 mod commands;
 mod error;
 mod models;
-mod store;
 
 #[cfg(any(desktop, target_os = "android"))]
 mod desktop;
 #[cfg(any(desktop, target_os = "android"))]
 use desktop::Download;
+#[cfg(any(desktop, target_os = "android"))]
+mod store;
 
 #[cfg(target_os = "ios")]
 mod mobile;
@@ -53,16 +54,17 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          let download = mobile::init(app, api)?;
 
          app.manage(download);
-
-         // Initialize the store plugin.
-         // https://docs.rs/tauri/latest/tauri/struct.AppHandle.html#method.plugin
-         let handle = app.app_handle().clone();
-         std::thread::spawn(move || {
-            handle
-               .plugin(tauri_plugin_store::Builder::new().build())
-               .unwrap();
-            handle.store("downloads.json").unwrap();
-         });
+         if cfg!(any(desktop, target_os = "android")) {
+            // Initialize the store plugin.
+            // https://docs.rs/tauri/latest/tauri/struct.AppHandle.html#method.plugin
+            let handle = app.app_handle().clone();
+            std::thread::spawn(move || {
+               handle
+                  .plugin(tauri_plugin_store::Builder::new().build())
+                  .unwrap();
+               handle.store("downloads.json").unwrap();
+            });
+         }
 
          Ok(())
       })

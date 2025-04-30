@@ -4,13 +4,13 @@ import SwiftRs
 import Tauri
 import WebKit
 
-class CreateRequestArgs: Decodable {
+class CreateArgs: Decodable {
    let key: String
    let url: String
    let path: String
 }
 
-class GetRequestArgs: Decodable {
+class KeyArgs: Decodable {
    let key: String
 }
 
@@ -30,13 +30,13 @@ class DownloadPlugin: Plugin {
    }
    
    @objc public func create(_ invoke: Invoke) throws {
-      let args = try invoke.parseArgs(CreateRequestArgs.self)
+      let args = try invoke.parseArgs(CreateArgs.self)
       let response = try downloadManager.create(key: args.key, url: URL(string: args.url)!, path: URL(string: args.path)!)
       invoke.resolve(response)
    }
    
    @objc public func get(_ invoke: Invoke) throws {
-      let args = try invoke.parseArgs(GetRequestArgs.self)
+      let args = try invoke.parseArgs(KeyArgs.self)
       let response = try downloadManager.get(key: args.key)
       invoke.resolve(response)
    }
@@ -47,25 +47,25 @@ class DownloadPlugin: Plugin {
    }
    
    @objc public func start(_ invoke: Invoke) throws {
-      let args = try invoke.parseArgs(GetRequestArgs.self)
+      let args = try invoke.parseArgs(KeyArgs.self)
       let response = try downloadManager.start(key: args.key)
       invoke.resolve(response)
    }
    
    @objc public func cancel(_ invoke: Invoke) throws {
-      let args = try invoke.parseArgs(GetRequestArgs.self)
+      let args = try invoke.parseArgs(KeyArgs.self)
       let response = try downloadManager.cancel(key: args.key)
       invoke.resolve(response)
    }
    
    @objc public func pause(_ invoke: Invoke) throws {
-      let args = try invoke.parseArgs(GetRequestArgs.self)
+      let args = try invoke.parseArgs(KeyArgs.self)
       let response = try downloadManager.pause(key: args.key)
       invoke.resolve(response)
    }
    
    @objc public func resume(_ invoke: Invoke) throws {
-      let args = try invoke.parseArgs(GetRequestArgs.self)
+      let args = try invoke.parseArgs(KeyArgs.self)
       let response = try downloadManager.resume(key: args.key)
       invoke.resolve(response)
    }

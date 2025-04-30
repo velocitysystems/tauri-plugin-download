@@ -2,19 +2,19 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { addPluginListener } from '@tauri-apps/api/core';
 
-export class Download implements DownloadRecord {
+export class Download implements DownloadItem {
    public key: string;
    public url: string;
    public path: string;
    public progress: number;
    public state: DownloadState;
 
-   public constructor(record: DownloadRecord) {
-      this.key = record.key;
-      this.url = record.url;
-      this.path = record.path;
-      this.progress = record.progress;
-      this.state = record.state;
+   public constructor(item: DownloadItem) {
+      this.key = item.key;
+      this.url = item.url;
+      this.path = item.path;
+      this.progress = item.progress;
+      this.state = item.state;
    }
 
    /**
@@ -67,13 +67,13 @@ export class Download implements DownloadRecord {
    * ```
    */
    public async listen(listener: (download: Download) => void): Promise<UnlistenFn> {
-      const eventUnlistenFn = await listen<DownloadRecord>('tauri-plugin-download:changed', (event) => {
+      const eventUnlistenFn = await listen<DownloadItem>('tauri-plugin-download:changed', (event) => {
          if (event.payload.key === this.key) {
             listener(new Download(event.payload));
          }
       });
 
-      const pluginListener = await addPluginListener('download', 'changed', (event: DownloadRecord) => {
+      const pluginListener = await addPluginListener('download', 'changed', (event: DownloadItem) => {
          if (event.key === this.key) {
             listener(new Download(event));
          }
@@ -87,9 +87,9 @@ export class Download implements DownloadRecord {
 }
 
 /**
- * Represents a download record.
+ * Represents a download item.
  */
-export interface DownloadRecord {
+export interface DownloadItem {
   key: string;
   url: string;
   path: string;
@@ -118,7 +118,7 @@ export enum DownloadState {
  * @returns - The download operation.
  */
 export async function create(key: string, url: string, path: string): Promise<Download> {
-   return new Download(await invoke<DownloadRecord>('plugin:download|create', { key, url, path }));
+   return new Download(await invoke<DownloadItem>('plugin:download|create', { key, url, path }));
 }
 
 /**
@@ -127,8 +127,8 @@ export async function create(key: string, url: string, path: string): Promise<Do
  * @returns - The list of download operations.
  */
 export async function list(): Promise<Download[]> {
-   return (await invoke<DownloadRecord[]>('plugin:download|list'))
-      .map((record) => { return new Download(record); });
+   return (await invoke<DownloadItem[]>('plugin:download|list'))
+      .map((item) => { return new Download(item); });
 }
 
 /**
@@ -138,5 +138,5 @@ export async function list(): Promise<Download[]> {
  * @returns - The download operation.
  */
 export async function get(key: string): Promise<Download> {
-   return new Download(await invoke<DownloadRecord>('plugin:download|get', { key }));
+   return new Download(await invoke<DownloadItem>('plugin:download|get', { key }));
 }
