@@ -135,7 +135,19 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
       
       return item
    }
-   
+
+   /**
+    URLSession delegate method called periodically to inform about download progress.
+
+    This method is called periodically during a download operation to provide information about the amount of data that has been downloaded.
+
+    - Parameters:
+      - session: The URL session containing the download task.
+      - downloadTask: The download task that provided data.
+      - bytesWritten: The number of bytes that were written in the latest write operation.
+      - totalBytesWritten: The total number of bytes transferred so far.
+      - totalBytesExpectedToWrite: The expected length of the file, as provided by the Content-Length header. If this header was not provided, the value is NSURLSessionTransferSizeUnknown.
+    */
    public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
       guard let url = downloadTask.originalRequest?.url,
             let item = downloads.first(where: { $0.url == url }) else { return }
@@ -147,10 +159,27 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
       }
    }
 
+   /**
+    URLSession delegate method called when the download task has finished downloading.
+
+    This method is called when the download task has completed successfully and the downloaded file is available at the specified location.
+
+    - Parameters:
+      - session: The URL session containing the download task.
+      - downloadTask: The download task that finished downloading.
+      - location: The temporary location of the downloaded file.
+    */
    public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
       guard let url = downloadTask.originalRequest?.url,
             let item = downloads.first(where: { $0.url == url }) else { return }
 
+      // Ensure parent directory exists.
+      let parentDirectory = item.path.deletingLastPathComponent()
+      if !FileManager.default.fileExists(atPath: parentDirectory.path) {
+         try? FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
+      }
+
+      // Remove existing item (if found) and move downloaded item to destination path.
       try? FileManager.default.removeItem(at: item.path)
       try? FileManager.default.moveItem(at: location, to: item.path)
       activeTasks[item.key] = nil
