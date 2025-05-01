@@ -2,11 +2,13 @@
 //  DownloadItem.swift
 //  DownloadManagerKit
 //
-//  Created by Matthew Richardson on 25/04/2025.
-//
 
 import Foundation
 
+/**
+ A class that represents an item to be downloaded.
+ Used to track the state and progress of a download operation.
+ */
 public class DownloadItem: ObservableObject, Identifiable, Codable {
    enum CodingKeys: CodingKey {
       case key, url, path, progress, state, resumeDataPath

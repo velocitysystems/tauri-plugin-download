@@ -2,17 +2,22 @@
 //  DownloadManager.swift
 //  DownloadManagerKit
 //
-//  Created by Matthew Richardson on 24/04/2025.
-//
 
 import Combine
 import Foundation
 
+/**
+ A manager class responsible for handling download operations.
+
+ This class provides functionality for downloading files from URLs, tracking download progress,
+ and handling completion events. It adopts the `ObservableObject` protocol to support SwiftUI data binding and
+ the `URLSessionDownloadDelegate` to manage download tasks.
+ */
 public final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDelegate, @unchecked Sendable {
    public static let shared = DownloadManager()
    @Published public var downloads: [DownloadItem] = []
 
-   public var downloadItemChanged: AnyPublisher<DownloadItem, Never> {
+   public var changed: AnyPublisher<DownloadItem, Never> {
       downloadItemSubject.eraseToAnyPublisher()
    }
 
@@ -30,11 +35,7 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
    }
 
    public func create(key: String, url: URL, path: URL) throws -> DownloadItem {
-      if downloads.contains(where: { $0.key == key })
-      {
-         throw DownloadError.duplicateKey
-      }
-      
+      guard !downloads.contains(where: { $0.key == key }) else { throw DownloadError.duplicateKey(key) }
       let item = DownloadItem(key: key, url: url, path: path)
       downloads.append(item)
       saveState()
@@ -44,7 +45,7 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
    }
     
    public func get(key: String) throws -> DownloadItem {
-       guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey }
+       guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey(key) }
        return item
    }
     
@@ -54,8 +55,8 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
    
    public func start(key: String) throws -> DownloadItem {
       guard let session = session else { throw DownloadError.sessionNotFound }
-      guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey }
-      guard item.state == .created else { throw DownloadError.invalidState }
+      guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey(key) }
+      guard item.state == .created else { throw DownloadError.invalidState(item.state) }
       
       let task = session.downloadTask(with: item.url)
       task.resume()
@@ -72,14 +73,14 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
    }
    
    public func cancel(key: String) throws -> DownloadItem {
-      guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey }
-      guard item.state == .created || item.state == .inProgress || item.state == .paused else { throw DownloadError.invalidState }
+      guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey(key) }
+      guard item.state == .created || item.state == .inProgress || item.state == .paused else { throw DownloadError.invalidState(item.state) }
       
       if let task = activeTasks[key] {
          task?.cancel()
       }
       
-      if let data = loadResumeData(for: item) {
+      if let _ = loadResumeData(for: item) {
          deleteResumeData(for: item)
       }
       
@@ -94,9 +95,9 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
    }
    
    public func pause(key: String) throws -> DownloadItem {
-      guard let task = activeTasks[key] else { throw DownloadError.taskNotFound }
-      guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey }
-      guard item.state == .inProgress else { throw DownloadError.invalidState }
+      guard let task = activeTasks[key] else { throw DownloadError.sessionDownloadTaskNotFound(key) }
+      guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey(key) }
+      guard item.state == .inProgress else { throw DownloadError.invalidState(item.state) }
       
       task?.cancel(byProducingResumeData: { data in
          if let data = data {
@@ -117,9 +118,9 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
    
    public func resume(key: String) throws -> DownloadItem {
       guard let session = session else { throw DownloadError.sessionNotFound }
-      guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey }
-      guard let data = loadResumeData(for: item) else { throw DownloadError.resumeDataNotFound }
-      guard item.state == .paused else { throw DownloadError.invalidState }
+      guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey(key) }
+      guard let data = loadResumeData(for: item) else { throw DownloadError.resumeDataNotFound(key) }
+      guard item.state == .paused else { throw DownloadError.invalidState(item.state) }
       
       let task = session.downloadTask(withResumeData: data)
       task.resume()
@@ -138,7 +139,6 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
 
    /**
     URLSession delegate method called periodically to inform about download progress.
-
     This method is called periodically during a download operation to provide information about the amount of data that has been downloaded.
 
     - Parameters:
@@ -161,7 +161,6 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
 
    /**
     URLSession delegate method called when the download task has finished downloading.
-
     This method is called when the download task has completed successfully and the downloaded file is available at the specified location.
 
     - Parameters:

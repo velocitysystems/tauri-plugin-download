@@ -21,7 +21,7 @@ class DownloadPlugin: Plugin {
    override init()
    {
       super.init()
-      downloadManager.downloadItemChanged
+      downloadManager.changed
          .sink { download in
             try? self.trigger("changed", data: download);
             Logger.debug("[\(download.key)] \(download.state) - \(String(format: "%.0f", download.progress))%")

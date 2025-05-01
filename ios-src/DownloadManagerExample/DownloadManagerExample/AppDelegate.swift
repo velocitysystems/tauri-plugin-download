@@ -2,8 +2,6 @@
 //  AppDelegate.swift
 //  DownloadManagerExample
 //
-//  Created by Matthew Richardson on 25/04/2025.
-//
 
 import UIKit
 
