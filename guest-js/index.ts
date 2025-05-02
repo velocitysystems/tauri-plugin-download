@@ -1,7 +1,103 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, addPluginListener } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { addPluginListener } from '@tauri-apps/api/core';
 
+/**
+ * Manages subscriptions to download events from Rust and
+ * mobile plugins (iOS/Android), and dispatching these events
+ * to registered listeners.
+ */
+export class DownloadEventManager {
+   public static shared: DownloadEventManager = new DownloadEventManager();
+   private _listeners: Map<string, Set<(download: Download) => void>> = new Map();
+   private _eventUnlistenFn: UnlistenFn | null = null;
+   private _pluginListener: { unregister: () => void } | null = null;
+
+   private constructor() { }
+
+   /**
+    * Adds a listener for download events.
+    * @param key - The key of the download item to listen for.
+    * @param listener - The callback function to invoke when the download changes.
+    * @returns A promise with a function to remove this specific listener.
+    */
+   public async addListener(key: string, listener: (download: Download) => void): Promise<() => void> {
+      await this.ensureGlobalListeners();
+
+      if (!this._listeners.has(key)) {
+         this._listeners.set(key, new Set());
+      }
+
+      const listenersForKey = this._listeners.get(key);
+
+      if (listenersForKey) {
+         listenersForKey.add(listener);
+      }
+
+      // Return a function to remove this specific listener
+      return () => {
+         const listeners = this._listeners.get(key);
+
+         if (listeners) {
+            listeners.delete(listener);
+
+            // If no more listeners for this key, remove the key from the map.
+            if (listeners.size === 0) {
+               this._listeners.delete(key);
+            }
+         }
+
+         this.cleanupGlobalListeners();
+      };
+   }
+
+   private async ensureGlobalListeners(): Promise<void> {
+      if (this._eventUnlistenFn && this._pluginListener) {
+         return;
+      }
+
+      // Listen for download events from Rust.
+      this._eventUnlistenFn = await listen<DownloadItem>('tauri-plugin-download:changed', (event) => {
+         const key = event.payload.key,
+               listeners = this._listeners.get(key);
+
+         if (listeners) {
+            // eslint-disable-next-line @typescript-eslint/no-use-before-define
+            listeners.forEach((listener) => { return listener(new Download(event.payload)); });
+         }
+      });
+
+      // Listen for download events from mobile plugin.
+      this._pluginListener = await addPluginListener('download', 'changed', (event: DownloadItem) => {
+         const key = event.key,
+               listeners = this._listeners.get(key);
+
+         if (listeners) {
+            // eslint-disable-next-line @typescript-eslint/no-use-before-define
+            listeners.forEach((listener) => { return listener(new Download(event)); });
+         }
+      });
+   }
+
+   private cleanupGlobalListeners(): void {
+      if (this._listeners.size === 0) {
+         if (this._eventUnlistenFn) {
+            this._eventUnlistenFn();
+            this._eventUnlistenFn = null;
+         }
+
+         if (this._pluginListener) {
+            this._pluginListener.unregister();
+            this._pluginListener = null;
+         }
+      }
+   }
+}
+
+/**
+ * Represents a download item with methods to control its lifecycle.
+ * This class wraps a download item and provides methods to start, cancel, pause, resume,
+ * and listen for changes to the download.
+ */
 export class Download implements DownloadItem {
    public key: string;
    public url: string;
@@ -67,22 +163,7 @@ export class Download implements DownloadItem {
    * ```
    */
    public async listen(listener: (download: Download) => void): Promise<UnlistenFn> {
-      const eventUnlistenFn = await listen<DownloadItem>('tauri-plugin-download:changed', (event) => {
-         if (event.payload.key === this.key) {
-            listener(new Download(event.payload));
-         }
-      });
-
-      const pluginListener = await addPluginListener('download', 'changed', (event: DownloadItem) => {
-         if (event.key === this.key) {
-            listener(new Download(event));
-         }
-      });
-
-      return () => {
-         eventUnlistenFn();
-         pluginListener.unregister();
-      };
+      return DownloadEventManager.shared.addListener(this.key, listener);
    }
 }
 
