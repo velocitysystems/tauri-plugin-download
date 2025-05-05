@@ -16,17 +16,16 @@ class KeyArgs: Decodable {
 
 class DownloadPlugin: Plugin {
    let downloadManager = DownloadManager.shared
-   private var cancellables = Set<AnyCancellable>()
    
    override init()
    {
       super.init()
-      downloadManager.changed
-         .sink { download in
-            try? self.trigger("changed", data: download);
-            Logger.debug("[\(download.key)] \(download.state) - \(String(format: "%.0f", download.progress))%")
-         }
-         .store(in: &cancellables)
+      Task {
+          for await download in DownloadManager.shared.changed {
+             try? self.trigger("changed", data: download);
+             Logger.debug("[\(download.key)] \(download.state) - \(String(format: "%.0f", download.progress))%")
+          }
+      }
    }
    
    @objc public func create(_ invoke: Invoke) throws {

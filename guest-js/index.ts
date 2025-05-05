@@ -57,25 +57,22 @@ export class DownloadEventManager {
 
       // Listen for download events from Rust.
       this._eventUnlistenFn = await listen<DownloadItem>('tauri-plugin-download:changed', (event) => {
-         const key = event.payload.key,
-               listeners = this._listeners.get(key);
-
-         if (listeners) {
-            // eslint-disable-next-line @typescript-eslint/no-use-before-define
-            listeners.forEach((listener) => { return listener(new Download(event.payload)); });
-         }
+         this.notifyListeners(event.payload.key, event.payload);
       });
 
       // Listen for download events from mobile plugin.
       this._pluginListener = await addPluginListener('download', 'changed', (event: DownloadItem) => {
-         const key = event.key,
-               listeners = this._listeners.get(key);
-
-         if (listeners) {
-            // eslint-disable-next-line @typescript-eslint/no-use-before-define
-            listeners.forEach((listener) => { return listener(new Download(event)); });
-         }
+         this.notifyListeners(event.key, event);
       });
+   }
+
+   private notifyListeners(key: string, event: DownloadItem): void {
+      const listeners = this._listeners.get(key);
+
+      if (listeners) {
+         // eslint-disable-next-line @typescript-eslint/no-use-before-define
+         listeners.forEach((listener) => { return listener(new Download(event)); });
+      }
    }
 
    private cleanupGlobalListeners(): void {

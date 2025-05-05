@@ -11,7 +11,7 @@ enum DownloadError: Error {
    case resumeDataNotFound(String)
    case sessionNotFound
    case sessionDownloadTaskNotFound(String)
-
+   
    var localizedDescription: String {
       switch self {
          case .duplicateKey(let key):

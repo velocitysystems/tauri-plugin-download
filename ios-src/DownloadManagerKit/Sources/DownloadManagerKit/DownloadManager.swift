@@ -6,32 +6,46 @@
 import Combine
 import Foundation
 
-/**
- A manager class responsible for handling download operations.
-
- This class provides functionality for downloading files from URLs, tracking download progress,
- and handling completion events. It adopts the `ObservableObject` protocol to support SwiftUI data binding and
- the `URLSessionDownloadDelegate` to manage download tasks.
- */
-public final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDelegate, @unchecked Sendable {
+/// A manager class responsible for handling download operations.
+/// Used to provide functionality for downloading files, tracking download progress and handling completion events.
+public final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDelegate {
    public static let shared = DownloadManager()
-   @Published public var downloads: [DownloadItem] = []
-
-   public var changed: AnyPublisher<DownloadItem, Never> {
-      downloadItemSubject.eraseToAnyPublisher()
+   @Published public private(set) var downloads: [DownloadItem] = []
+   
+   public var changed: AsyncStream<DownloadItem> {
+       AsyncStream { continuation in
+           var id: UUID?
+           Task {
+               id = await downloadContinuation.add(continuation)
+           }
+           
+           continuation.onTermination = { @Sendable _ in
+              if let id = id {
+                 Task {
+                    await self.downloadContinuation.remove(id)
+                 }
+              }
+           }
+       }
    }
-
+   
    let savePath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("downloads.json")
    let queue = DispatchQueue(label: Bundle.main.bundleIdentifier!, attributes: .concurrent)
-   let downloadItemSubject = PassthroughSubject<DownloadItem, Never>()
+   let downloadContinuation = DownloadContinuation()
+   
    var session: URLSession?
-   var activeTasks: [String: URLSessionDownloadTask?] = [:]
 
    override init() {
       super.init()
       let config = URLSessionConfiguration.background(withIdentifier: Bundle.main.bundleIdentifier!)
-      session = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+      session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
       loadState()
+   }
+   
+   deinit {
+      Task {
+         await downloadContinuation.finish()
+      }
    }
 
    public func create(key: String, url: URL, path: URL) throws -> DownloadItem {
@@ -59,10 +73,10 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
       guard item.state == .created else { throw DownloadError.invalidState(item.state) }
       
       let task = session.downloadTask(with: item.url)
+      task.taskDescription = key
       task.resume()
-      activeTasks[key] = task
       
-      item.state = .inProgress
+      item.setState(.inProgress)
       if let index = downloads.firstIndex(where: {$0.key == key}) {
          downloads[index] = item
          saveState()
@@ -76,15 +90,15 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
       guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey(key) }
       guard item.state == .created || item.state == .inProgress || item.state == .paused else { throw DownloadError.invalidState(item.state) }
       
-      if let task = activeTasks[key] {
-         task?.cancel()
+      if let task = getDownloadTask(key) {
+         task.cancel()
       }
       
       if let _ = loadResumeData(for: item) {
          deleteResumeData(for: item)
       }
       
-      item.state = .cancelled
+      item.setState(.cancelled)
       if let index = self.downloads.firstIndex(where: {$0.key == key}) {
          downloads.remove(at: index)
          saveState()
@@ -95,18 +109,17 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
    }
    
    public func pause(key: String) throws -> DownloadItem {
-      guard let task = activeTasks[key] else { throw DownloadError.sessionDownloadTaskNotFound(key) }
+      guard let task = getDownloadTask(key) else { throw DownloadError.sessionDownloadTaskNotFound(key) }
       guard let item = downloads.first(where: { $0.key == key }) else { throw DownloadError.invalidKey(key) }
       guard item.state == .inProgress else { throw DownloadError.invalidState(item.state) }
       
-      task?.cancel(byProducingResumeData: { data in
+      task.cancel(byProducingResumeData: { data in
          if let data = data {
             self.saveResumeData(data, for: item)
-            self.activeTasks[key] = nil
          }
       })
       
-      item.state = .paused
+      item.setState(.paused)
       if let index = self.downloads.firstIndex(where: {$0.key == key}) {
          downloads[index] = item
          saveState()
@@ -123,11 +136,11 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
       guard item.state == .paused else { throw DownloadError.invalidState(item.state) }
       
       let task = session.downloadTask(withResumeData: data)
+      task.taskDescription = key
       task.resume()
       deleteResumeData(for: item)
-      activeTasks[key] = task
       
-      item.state = .inProgress
+      item.setState(.inProgress)
       if let index = self.downloads.firstIndex(where: {$0.key == key}) {
          downloads[index] = item
          saveState()
@@ -152,7 +165,7 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
       guard let url = downloadTask.originalRequest?.url,
             let item = downloads.first(where: { $0.url == url }) else { return }
 
-      item.progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) * 100
+      item.setProgress(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) * 100)
       if let index = self.downloads.firstIndex(where: {$0.key == item.key}) {
          downloads[index] = item
          emitChanged(item)
@@ -181,9 +194,8 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
       // Remove existing item (if found) and move downloaded item to destination path.
       try? FileManager.default.removeItem(at: item.path)
       try? FileManager.default.moveItem(at: location, to: item.path)
-      activeTasks[item.key] = nil
-      
-      item.state = .completed
+
+      item.setState(.completed)
       if let index = self.downloads.firstIndex(where: {$0.key == item.key}) {
          downloads.remove(at: index)
          saveState()
@@ -229,7 +241,21 @@ public final class DownloadManager: NSObject, ObservableObject, URLSessionDownlo
       }
    }
    
+   func getDownloadTask(_ key: String) -> URLSessionDownloadTask? {
+      var task: URLSessionDownloadTask? = nil
+      session?.getAllTasks { tasks in
+         task = tasks.compactMap { $0 as? URLSessionDownloadTask }.first { $0.taskDescription == key }
+      }
+
+      let semaphore = DispatchSemaphore(value: 0)
+      session?.getAllTasks { _ in semaphore.signal() }
+      semaphore.wait()
+      return task
+   }
+
    func emitChanged(_ item: DownloadItem) {
-      downloadItemSubject.send(item)
+      Task {
+         await downloadContinuation.yield(item)
+      }
    }
 }

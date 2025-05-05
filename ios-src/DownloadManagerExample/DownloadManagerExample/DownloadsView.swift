@@ -10,14 +10,13 @@ import DownloadManagerKit
 struct DownloadsView: View {
    @StateObject private var manager = DownloadManager.shared
    @State private var downloadUrl: String = ""
-   private var cancellables = Set<AnyCancellable>()
 
    init() {
-      manager.downloadItemChanged
-         .sink { download in
+      Task {
+         for await download in DownloadManager.shared.changed {
             print("[\(download.key)] \(download.state) - \(String(format: "%.0f", download.progress))%")
          }
-      .store(in: &cancellables)
+      }
    }
 
    var body: some View {
@@ -51,12 +50,20 @@ struct DownloadsView: View {
                         .progressViewStyle(LinearProgressViewStyle())
                      switch item.state {
                      case .created:
-                        Button(action: { _ = try? manager.start(key: item.key) }) {
-                           Text("Start")
-                              .padding(8)
-                              .background(Color.blue.opacity(0.2))
-                              .cornerRadius(8)
-                        }.buttonStyle(PlainButtonStyle())
+                        HStack(spacing: 8) {
+                           Button(action: { _ = try? manager.start(key: item.key) }) {
+                              Text("Start")
+                                 .padding(8)
+                                 .background(Color.blue.opacity(0.2))
+                                 .cornerRadius(8)
+                           }.buttonStyle(PlainButtonStyle())
+                           Button(action: { _ = try? manager.cancel(key: item.key) }) {
+                              Text("Cancel")
+                                 .padding(8)
+                                 .background(Color.red.opacity(0.2))
+                                 .cornerRadius(8)
+                           }.buttonStyle(PlainButtonStyle())
+                        }
                      case .inProgress:
                         HStack(spacing: 8) {
                            Button(action: { _ = try? manager.pause(key: item.key) }) {
@@ -100,7 +107,22 @@ struct DownloadsView: View {
    }
 
    private func createDownload() {
-      guard let url = URL(string: downloadUrl), !downloadUrl.isEmpty else {
+      guard !downloadUrl.isEmpty else {
+         return
+      }
+
+      guard let url = URL(string: downloadUrl), url.scheme != nil && url.host != nil else {
+         let alertController = UIAlertController(
+            title: "Invalid URL",
+            message: "The URL you entered is not valid.",
+            preferredStyle: .alert
+         )
+         alertController.addAction(UIAlertAction(title: "OK", style: .default))
+
+         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+            let rootViewController = windowScene.windows.first?.rootViewController {
+            rootViewController.present(alertController, animated: true)
+         }
          return
       }
 

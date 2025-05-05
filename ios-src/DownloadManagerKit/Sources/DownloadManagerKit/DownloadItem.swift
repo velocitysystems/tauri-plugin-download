@@ -5,11 +5,9 @@
 
 import Foundation
 
-/**
- A class that represents an item to be downloaded.
- Used to track the state and progress of a download operation.
- */
-public class DownloadItem: ObservableObject, Identifiable, Codable {
+/// A class that represents an item to be downloaded.
+/// Used to track the state and progress of a download operation.
+public final class DownloadItem: ObservableObject, Identifiable, Codable {
    enum CodingKeys: CodingKey {
       case key, url, path, progress, state, resumeDataPath
    }
@@ -17,8 +15,8 @@ public class DownloadItem: ObservableObject, Identifiable, Codable {
    public let key: String
    public let url: URL
    public let path: URL
-   @Published public var progress: Double
-   @Published public var state: DownloadState
+   @Published public private(set) var progress: Double
+   @Published public private(set) var state: DownloadState
    public var resumeDataPath: URL?
    
    init(key: String, url: URL, path: URL, progress: Double = 0.0, state: DownloadState = .created, resumeDataPath: URL? = nil) {
@@ -39,6 +37,14 @@ public class DownloadItem: ObservableObject, Identifiable, Codable {
       state = try container.decode(DownloadState.self, forKey: .state)
       resumeDataPath = try container.decodeIfPresent(URL.self, forKey: .resumeDataPath)
    }
+   
+   public func setProgress(_ progress: Double) {
+      self.progress = progress
+   }
+   
+   public func setState(_ state: DownloadState) {
+      self.state = state
+   }   
    
    public func encode(to encoder: Encoder) throws {
       var container = encoder.container(keyedBy: CodingKeys.self)
