@@ -55,15 +55,19 @@ export class DownloadEventManager {
          return;
       }
 
-      // Listen for download events from Rust.
-      this._eventUnlistenFn = await listen<DownloadItem>('tauri-plugin-download:changed', (event) => {
-         this.notifyListeners(event.payload.key, event.payload);
-      });
+      // Check if the plugin is running in a native environment (iOS)
+      // or is the shared Rust implementation (desktop/Android).
+      const isNative = await invoke<boolean>('plugin:download|is_native');
 
-      // Listen for download events from mobile plugin.
-      this._pluginListener = await addPluginListener('download', 'changed', (event: DownloadItem) => {
-         this.notifyListeners(event.key, event);
-      });
+      if (isNative) {
+         this._pluginListener = await addPluginListener('download', 'changed', (event: DownloadItem) => {
+            this.notifyListeners(event.key, event);
+         });
+      } else {
+         this._eventUnlistenFn = await listen<DownloadItem>('tauri-plugin-download:changed', (event) => {
+            this.notifyListeners(event.payload.key, event.payload);
+         });
+      }
    }
 
    private notifyListeners(key: string, event: DownloadItem): void {

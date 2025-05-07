@@ -43,3 +43,15 @@ pub(crate) async fn pause<R: Runtime>(app: AppHandle<R>, key: String) -> Result<
 pub(crate) async fn resume<R: Runtime>(app: AppHandle<R>, key: String) -> Result<DownloadItem> {
    app.download().resume(app.clone(), key)
 }
+
+#[tauri::command(rename_all = "snake_case")]
+pub(crate) async fn is_native<R: Runtime>(_app: AppHandle<R>) -> Result<bool> {
+   #[cfg(any(target_os = "ios"))]
+   {
+      Ok(true)
+   }
+   #[cfg(any(desktop, target_os = "android"))]
+   {
+      Ok(false)
+   }
+}

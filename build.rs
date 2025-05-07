@@ -1,5 +1,5 @@
 const COMMANDS: &[&str] = &[
-   "create", "list", "get", "start", "cancel", "pause", "resume", "registerListener"
+   "create", "list", "get", "start", "cancel", "pause", "resume", "is_native", "registerListener"
 ];
 
 fn main() {

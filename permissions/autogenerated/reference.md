@@ -11,6 +11,7 @@ Default permissions for the plugin
 - `allow-cancel`
 - `allow-pause`
 - `allow-resume`
+- `allow-is-native`
 - `allow-registerListener`
 
 ## Permission Table
@@ -96,6 +97,32 @@ Enables the get command without any pre-configured scope.
 <td>
 
 Denies the get command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`download:allow-is-native`
+
+</td>
+<td>
+
+Enables the is_native command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`download:deny-is-native`
+
+</td>
+<td>
+
+Denies the is_native command without any pre-configured scope.
 
 </td>
 </tr>

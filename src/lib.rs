@@ -44,7 +44,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          commands::start,
          commands::cancel,
          commands::pause,
-         commands::resume
+         commands::resume,
+         commands::is_native,
       ])
       .setup(|app, api| {
          #[cfg(any(desktop, target_os = "android"))]
