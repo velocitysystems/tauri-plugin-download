@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "org.silvermine.tauri-plugin-download"
+    namespace = "com.plugin.download"
     compileSdk = 34
 
     defaultConfig {

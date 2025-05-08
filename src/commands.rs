@@ -46,11 +46,11 @@ pub(crate) async fn resume<R: Runtime>(app: AppHandle<R>, key: String) -> Result
 
 #[tauri::command(rename_all = "snake_case")]
 pub(crate) async fn is_native<R: Runtime>(_app: AppHandle<R>) -> Result<bool> {
-   #[cfg(any(target_os = "ios"))]
+   #[cfg(mobile)]
    {
       Ok(true)
    }
-   #[cfg(any(desktop, target_os = "android"))]
+   #[cfg(desktop)]
    {
       Ok(false)
    }

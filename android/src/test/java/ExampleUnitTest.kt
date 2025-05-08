@@ -1,4 +1,4 @@
-package org.silvermine.tauri-plugin-download
+package com.plugin.download
 
 import org.junit.Test
 

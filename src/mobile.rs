@@ -11,6 +11,8 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
    _app: &AppHandle<R>,
    _api: PluginApi<R, C>,
 ) -> crate::Result<Download<R>> {
+   #[cfg(target_os = "android")]
+   let handle = _api.register_android_plugin("com.plugin.download", "DownloadPlugin")?;
    #[cfg(target_os = "ios")]
    let handle = _api.register_ios_plugin(init_plugin_download)?;
    Ok(Download(handle))

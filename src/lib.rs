@@ -11,16 +11,16 @@ mod commands;
 mod error;
 mod models;
 
-#[cfg(any(desktop, target_os = "android"))]
+#[cfg(desktop)]
 mod desktop;
-#[cfg(any(desktop, target_os = "android"))]
+#[cfg(desktop)]
 use desktop::Download;
-#[cfg(any(desktop, target_os = "android"))]
+#[cfg(desktop)]
 mod store;
 
-#[cfg(target_os = "ios")]
+#[cfg(mobile)]
 mod mobile;
-#[cfg(target_os = "ios")]
+#[cfg(mobile)]
 use mobile::Download;
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`] to access the download APIs.
@@ -48,14 +48,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          commands::is_native,
       ])
       .setup(|app, api| {
-         #[cfg(any(desktop, target_os = "android"))]
+         #[cfg(desktop)]
          let download = desktop::init(app, api)?;
 
-         #[cfg(target_os = "ios")]
+         #[cfg(mobile)]
          let download = mobile::init(app, api)?;
 
          app.manage(download);
-         if cfg!(any(desktop, target_os = "android")) {
+         if cfg!(desktop) {
             // Initialize the store plugin.
             // https://docs.rs/tauri/latest/tauri/struct.AppHandle.html#method.plugin
             let handle = app.app_handle().clone();

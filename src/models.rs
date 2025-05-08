@@ -37,14 +37,14 @@ pub enum DownloadState {
    Completed,
 }
 
-#[cfg(any(desktop, target_os = "android"))]
+#[cfg(desktop)]
 pub trait DownloadItemExt {
    fn with_path(&self, new_path: String) -> DownloadItem;
    fn with_progress(&self, new_progress: f64) -> DownloadItem;
    fn with_state(&self, new_state: DownloadState) -> DownloadItem;
 }
 
-#[cfg(any(desktop, target_os = "android"))]
+#[cfg(desktop)]
 impl DownloadItemExt for DownloadItem {
    fn with_path(&self, new_path: String) -> DownloadItem {
       DownloadItem {
@@ -74,7 +74,7 @@ impl DownloadItemExt for DownloadItem {
    }
 }
 
-#[cfg(any(desktop, target_os = "android"))]
+#[cfg(desktop)]
 impl fmt::Display for DownloadState {
    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
       let text = match self {
