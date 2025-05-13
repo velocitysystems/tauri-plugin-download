@@ -25,15 +25,17 @@
     "standards": "npm run commitlint && npm run eslint && npm run markdownlint",
     "rust:lint": "cargo clippy --all-targets --all-features -- -D warnings",
     "rust:fix": "cargo fmt --all",
-    "prepare": "rollup -c"
+    "prepare": "rollup -c",
+    "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": ">=2.0.0"
+    "@tauri-apps/api": ">=2.5.0"
   },
   "devDependencies": {
+    "@rollup/plugin-typescript": "^11.1.6",
     "@silvermine/eslint-config": "github:silvermine/eslint-config-silvermine#9dc1394edb2a6a3cb27cb5345a9e55e4ee5d08a3",
     "@silvermine/standardization": "^2.2.3",
-    "@rollup/plugin-typescript": "^11.1.6",
+    "@tauri-apps/cli": "^2.5.0",
     "eslint": "8.57.0",
     "rollup": "^4.9.6",
     "typescript": "5.4.5",

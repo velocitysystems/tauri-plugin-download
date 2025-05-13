@@ -3,19 +3,25 @@ use tauri::{
    Manager, RunEvent, Runtime,
 };
 
-pub use models::*;
+use error::{Error, Result};
+use models::*;
+use tauri_plugin_store::StoreExt;
 
 mod commands;
 mod error;
 mod models;
-mod shared;
+
+#[cfg(any(desktop, target_os = "android"))]
+mod desktop;
+#[cfg(any(desktop, target_os = "android"))]
+use desktop::Download;
+#[cfg(any(desktop, target_os = "android"))]
 mod store;
-mod utils;
 
-pub use error::{Error, Result};
-
-use shared::Download;
-use tauri_plugin_store::StoreExt;
+#[cfg(target_os = "ios")]
+mod mobile;
+#[cfg(target_os = "ios")]
+use mobile::Download;
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`] to access the download APIs.
 pub trait DownloadExt<R: Runtime> {
@@ -38,21 +44,28 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          commands::start,
          commands::cancel,
          commands::pause,
-         commands::resume
+         commands::resume,
+         commands::is_native,
       ])
       .setup(|app, api| {
-         let download = shared::init(app, api)?;
-         app.manage(download);
+         #[cfg(any(desktop, target_os = "android"))]
+         let download = desktop::init(app, api)?;
 
-         // Initialize the store plugin.
-         // https://docs.rs/tauri/latest/tauri/struct.AppHandle.html#method.plugin
-         let handle = app.app_handle().clone();
-         std::thread::spawn(move || {
-            handle
-               .plugin(tauri_plugin_store::Builder::new().build())
-               .unwrap();
-            handle.store("downloads.json").unwrap();
-         });
+         #[cfg(target_os = "ios")]
+         let download = mobile::init(app, api)?;
+
+         app.manage(download);
+         if cfg!(any(desktop, target_os = "android")) {
+            // Initialize the store plugin.
+            // https://docs.rs/tauri/latest/tauri/struct.AppHandle.html#method.plugin
+            let handle = app.app_handle().clone();
+            std::thread::spawn(move || {
+               handle
+                  .plugin(tauri_plugin_store::Builder::new().build())
+                  .unwrap();
+               handle.store("downloads.json").unwrap();
+            });
+         }
 
          Ok(())
       })

@@ -1,28 +1,28 @@
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_store::StoreExt;
 
-use crate::{DownloadRecord, Error};
+use crate::{DownloadItem, Error};
 
 static DOWNLOAD_STORE_PATH: &str = "downloads.json";
 
-pub fn get_records<R: Runtime>(app: &AppHandle<R>) -> crate::Result<Vec<DownloadRecord>> {
+pub fn list<R: Runtime>(app: &AppHandle<R>) -> crate::Result<Vec<DownloadItem>> {
    let store = app
       .store(DOWNLOAD_STORE_PATH)
       .map_err(|e| Error::Store(format!("Failed to load store: {}", e)))?;
 
-   let mut records = Vec::new();
+   let mut items = Vec::new();
    for key in store.keys() {
       if let Some(value) = store.get(&key) {
-         let record: DownloadRecord = serde_json::from_value(value)
-            .map_err(|e| Error::Store(format!("Failed to parse record: {}", e)))?;
-         records.push(record);
+         let item: DownloadItem = serde_json::from_value(value)
+            .map_err(|e| Error::Store(format!("Failed to parse item: {}", e)))?;
+         items.push(item);
       }
    }
 
-   Ok(records)
+   Ok(items)
 }
 
-pub fn get_record<R: Runtime>(app: &AppHandle<R>, key: String) -> crate::Result<DownloadRecord> {
+pub fn get<R: Runtime>(app: &AppHandle<R>, key: String) -> crate::Result<DownloadItem> {
    let store = app
       .store(DOWNLOAD_STORE_PATH)
       .map_err(|e| Error::Store(format!("Failed to load store: {}", e)))?;
@@ -30,44 +30,44 @@ pub fn get_record<R: Runtime>(app: &AppHandle<R>, key: String) -> crate::Result<
    match store.get(&key) {
       Some(value) => Ok(serde_json::from_value(value).unwrap()),
       None => Err(Error::Store(format!(
-         "No download record found for key: {}",
+         "No download item found for key: {}",
          key
       ))),
    }
 }
 
-pub fn create_record<R: Runtime>(
+pub fn create<R: Runtime>(
    app: &AppHandle<R>,
-   record: DownloadRecord,
-) -> crate::Result<DownloadRecord> {
+   item: DownloadItem,
+) -> crate::Result<DownloadItem> {
    let store = app
       .store(DOWNLOAD_STORE_PATH)
       .map_err(|e| Error::Store(format!("Failed to load store: {}", e)))?;
 
-   match store.get(&record.key) {
+   match store.get(&item.key) {
       Some(_) => {
          return Err(Error::Store(format!(
-            "Record already exists for key: {}",
-            &record.key
+            "Item already exists for key: {}",
+            &item.key
          )))
       }
       None => {
-         store.set(&record.key, serde_json::to_value(&record).unwrap());
+         store.set(&item.key, serde_json::to_value(&item).unwrap());
          store
             .save()
             .map_err(|e| Error::Store(format!("Failed to save store: {}", e)))?;
       }
    }
 
-   Ok(record)
+   Ok(item)
 }
 
-pub fn update_record<R: Runtime>(app: &AppHandle<R>, record: DownloadRecord) -> crate::Result<()> {
+pub fn update<R: Runtime>(app: &AppHandle<R>, item: DownloadItem) -> crate::Result<()> {
    let store = app
       .store(DOWNLOAD_STORE_PATH)
       .map_err(|e| Error::Store(format!("Failed to load store: {}", e)))?;
 
-   store.set(&record.key, serde_json::to_value(&record).unwrap());
+   store.set(&item.key, serde_json::to_value(&item).unwrap());
    store
       .save()
       .map_err(|e| Error::Store(format!("Failed to save store: {}", e)))?;
@@ -75,7 +75,7 @@ pub fn update_record<R: Runtime>(app: &AppHandle<R>, record: DownloadRecord) -> 
    Ok(())
 }
 
-pub fn remove_record<R: Runtime>(app: &AppHandle<R>, key: String) -> crate::Result<()> {
+pub fn delete<R: Runtime>(app: &AppHandle<R>, key: String) -> crate::Result<()> {
    let store = app
       .store(DOWNLOAD_STORE_PATH)
       .map_err(|e| Error::Store(format!("Failed to load store: {}", e)))?;
