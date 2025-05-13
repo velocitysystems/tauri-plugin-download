@@ -21,7 +21,7 @@ export class DownloadEventManager {
     * @returns A promise with a function to remove this specific listener.
     */
    public async addListener(key: string, listener: (download: Download) => void): Promise<() => void> {
-      await this.ensureGlobalListeners();
+      await this._ensureGlobalListeners();
 
       if (!this._listeners.has(key)) {
          this._listeners.set(key, new Set());
@@ -46,12 +46,12 @@ export class DownloadEventManager {
             }
          }
 
-         this.cleanupGlobalListeners();
+         this._cleanupGlobalListeners();
       };
    }
 
-   private async ensureGlobalListeners(): Promise<void> {
-      if (this._eventUnlistenFn && this._pluginListener) {
+   private async _ensureGlobalListeners(): Promise<void> {
+      if (this._eventUnlistenFn || this._pluginListener) {
          return;
       }
 
@@ -61,16 +61,16 @@ export class DownloadEventManager {
 
       if (isNative) {
          this._pluginListener = await addPluginListener('download', 'changed', (event: DownloadItem) => {
-            this.notifyListeners(event.key, event);
+            this._notifyListeners(event.key, event);
          });
       } else {
          this._eventUnlistenFn = await listen<DownloadItem>('tauri-plugin-download:changed', (event) => {
-            this.notifyListeners(event.payload.key, event.payload);
+            this._notifyListeners(event.payload.key, event.payload);
          });
       }
    }
 
-   private notifyListeners(key: string, event: DownloadItem): void {
+   private _notifyListeners(key: string, event: DownloadItem): void {
       const listeners = this._listeners.get(key);
 
       if (listeners) {
@@ -79,17 +79,19 @@ export class DownloadEventManager {
       }
    }
 
-   private cleanupGlobalListeners(): void {
-      if (this._listeners.size === 0) {
-         if (this._eventUnlistenFn) {
-            this._eventUnlistenFn();
-            this._eventUnlistenFn = null;
-         }
+   private _cleanupGlobalListeners(): void {
+      if (this._listeners.size > 0) {
+         return;
+      }
 
-         if (this._pluginListener) {
-            this._pluginListener.unregister();
-            this._pluginListener = null;
-         }
+      if (this._eventUnlistenFn) {
+         this._eventUnlistenFn();
+         this._eventUnlistenFn = null;
+      }
+
+      if (this._pluginListener) {
+         this._pluginListener.unregister();
+         this._pluginListener = null;
       }
    }
 }
@@ -181,6 +183,7 @@ export interface DownloadItem {
 
 /**
 * Represents the state of a download operation.
+* Enum values are camel-cased to match the Rust and mobile plugin implementations.
 */
 export enum DownloadState {
   UNKNOWN = 'unknown',

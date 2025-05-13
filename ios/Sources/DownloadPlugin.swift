@@ -23,7 +23,9 @@ class DownloadPlugin: Plugin {
       Task {
           for await download in DownloadManager.shared.changed {
              try? self.trigger("changed", data: download);
+#if DEBUG
              Logger.debug("[\(download.key)] \(download.state) - \(String(format: "%.0f", download.progress))%")
+#endif
           }
       }
    }

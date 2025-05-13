@@ -26,6 +26,7 @@ impl<R: Runtime> Download<R> {
    /// application was suspended or terminated before a download was completed.
    ///
    pub fn init(&self) {
+      // Not implemented on mobile platforms since initialization is handled by the plugin.
    }
 
    ///
