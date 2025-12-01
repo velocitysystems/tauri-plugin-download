@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use tauri::AppHandle;
-use tauri::{plugin::PluginApi, Emitter, Runtime};
+use tauri::{Emitter, Runtime, plugin::PluginApi};
 use tauri_plugin_http::reqwest;
 use tauri_plugin_http::reqwest::header::{HeaderMap, RANGE};
 
@@ -37,7 +37,7 @@ impl<R: Runtime> Download<R> {
          .cloned()
          .collect();
 
-         items.into_iter().for_each(|item| {
+      items.into_iter().for_each(|item| {
          let new_state = if item.progress == 0.0 {
             DownloadState::Created
          } else {
@@ -59,7 +59,13 @@ impl<R: Runtime> Download<R> {
    ///
    /// # Returns
    /// The download operation.
-   pub fn create(&self, app: AppHandle<R>, key: String, url: String, path: String) -> crate::Result<DownloadItem> {
+   pub fn create(
+      &self,
+      app: AppHandle<R>,
+      key: String,
+      url: String,
+      path: String,
+   ) -> crate::Result<DownloadItem> {
       let path = format!("{}{}", path, DOWNLOAD_SUFFIX);
       store::create(
          &app,
@@ -141,10 +147,7 @@ impl<R: Runtime> Download<R> {
          DownloadState::Created | DownloadState::InProgress | DownloadState::Paused => {
             store::delete(&app, item.key.clone()).unwrap();
             if fs::remove_file(item.path.clone()).is_err() {
-               println!(
-                  "[{}] File was not found or could not be deleted",
-                  &item.key
-               );
+               println!("[{}] File was not found or could not be deleted", &item.key);
             }
 
             Download::emit_changed(&app, item.with_state(DownloadState::Cancelled));
@@ -349,9 +352,6 @@ impl<R: Runtime> Download<R> {
 
    fn emit_changed(app: &AppHandle<R>, item: DownloadItem) {
       app.emit("tauri-plugin-download:changed", &item).unwrap();
-      println!(
-         "[{}] {} - {:.0}%",
-         item.key, item.state, item.progress
-      );
+      println!("[{}] {} - {:.0}%", item.key, item.state, item.progress);
    }
 }

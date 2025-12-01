@@ -1,6 +1,6 @@
 use serde::de::DeserializeOwned;
-use tauri::{AppHandle, Runtime};
 use tauri::plugin::{PluginApi, PluginHandle};
+use tauri::{AppHandle, Runtime};
 
 use crate::models::*;
 
@@ -40,7 +40,13 @@ impl<R: Runtime> Download<R> {
    ///
    /// # Returns
    /// The download operation.
-   pub fn create(&self, _app: AppHandle<R>, key: String, url: String, path: String) -> crate::Result<DownloadItem> {
+   pub fn create(
+      &self,
+      _app: AppHandle<R>,
+      key: String,
+      url: String,
+      path: String,
+   ) -> crate::Result<DownloadItem> {
       self
          .0
          .run_mobile_plugin("create", CreateArgs { key, url, path })
@@ -72,10 +78,7 @@ impl<R: Runtime> Download<R> {
    /// # Returns
    /// The list of download operations.
    pub fn list(&self, _app: AppHandle<R>) -> crate::Result<Vec<DownloadItem>> {
-      self
-         .0
-         .run_mobile_plugin("list", ())
-         .map_err(Into::into)
+      self.0.run_mobile_plugin("list", ()).map_err(Into::into)
    }
 
    ///

@@ -1,6 +1,6 @@
 use tauri::{
-   plugin::{Builder, TauriPlugin},
    Manager, RunEvent, Runtime,
+   plugin::{Builder, TauriPlugin},
 };
 
 use error::{Error, Result};
