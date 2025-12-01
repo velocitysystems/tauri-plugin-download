@@ -1,2 +1,6 @@
-hard_tabs = false
 tab_spaces = 3
+hard_tabs = false
+newline_style = "Unix"
+remove_nested_parens = false
+use_field_init_shorthand = true
+use_try_shorthand = true

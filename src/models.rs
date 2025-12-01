@@ -1,18 +1,20 @@
-use std::fmt;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
+#[cfg(mobile)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateArgs {
-  pub key: String,
-  pub url: String,
-  pub path: String,
+   pub key: String,
+   pub url: String,
+   pub path: String,
 }
 
+#[cfg(mobile)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyArgs {
-  pub key: String
+   pub key: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

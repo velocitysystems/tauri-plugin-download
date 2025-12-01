@@ -1,8 +1,8 @@
-use tauri::{command, AppHandle, Runtime};
+use tauri::{AppHandle, Runtime, command};
 
-use crate::models::*;
 use crate::DownloadExt;
 use crate::Result;
+use crate::models::*;
 
 #[command]
 pub(crate) async fn create<R: Runtime>(
@@ -46,7 +46,7 @@ pub(crate) async fn resume<R: Runtime>(app: AppHandle<R>, key: String) -> Result
 
 #[tauri::command(rename_all = "snake_case")]
 pub(crate) async fn is_native<R: Runtime>(_app: AppHandle<R>) -> Result<bool> {
-   #[cfg(any(target_os = "ios"))]
+   #[cfg(target_os = "ios")]
    {
       Ok(true)
    }

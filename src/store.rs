@@ -36,10 +36,7 @@ pub fn get<R: Runtime>(app: &AppHandle<R>, key: String) -> crate::Result<Downloa
    }
 }
 
-pub fn create<R: Runtime>(
-   app: &AppHandle<R>,
-   item: DownloadItem,
-) -> crate::Result<DownloadItem> {
+pub fn create<R: Runtime>(app: &AppHandle<R>, item: DownloadItem) -> crate::Result<DownloadItem> {
    let store = app
       .store(DOWNLOAD_STORE_PATH)
       .map_err(|e| Error::Store(format!("Failed to load store: {}", e)))?;
@@ -49,7 +46,7 @@ pub fn create<R: Runtime>(
          return Err(Error::Store(format!(
             "Item already exists for key: {}",
             &item.key
-         )))
+         )));
       }
       None => {
          store.set(&item.key, serde_json::to_value(&item).unwrap());

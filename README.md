@@ -16,7 +16,9 @@ State-driven, resumable download API for Tauri 2.x apps.
 | iOS¹     | ✓         |
 
 ¹ Supports fully interruptible and resumable background downloads, even when the app
-is suspended or terminated using [`URLSession`](https://developer.apple.com/documentation/foundation/urlsession) with a background configuration.
+is suspended or terminated using
+[`URLSession`](https://developer.apple.com/documentation/foundation/urlsession) with a
+background configuration.
 
 ## Installation
 
