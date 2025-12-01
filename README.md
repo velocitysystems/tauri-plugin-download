@@ -1,6 +1,16 @@
-# tauri-plugin-download
+# Tauri Plugin Download
+
+[![CI][ci-badge]][ci-url]
 
 State-driven, resumable download API for Tauri 2.x apps.
+
+This plugin provides a cross-platform download interface with resumable downloads,
+progress tracking, and proper resource management.
+
+[ci-badge]: https://github.com/silvermine/tauri-plugin-download/actions/workflows/ci.yml/badge.svg
+[ci-url]: https://github.com/silvermine/tauri-plugin-download/actions/workflows/ci.yml
+
+## Features
 
    * Parallel, resumable download support
    * Persistable, thread-safe store
@@ -20,25 +30,57 @@ is suspended or terminated using
 [`URLSession`](https://developer.apple.com/documentation/foundation/urlsession) with a
 background configuration.
 
-## Installation
+## Getting Started
 
-Note: These steps are an interim workaround until the plugin is published.
+### Installation
+
+1. Install NPM dependencies:
+
+   ```bash
+   npm install
+   ```
+
+2. Build the TypeScript bindings:
+
+   ```bash
+   npm run build
+   ```
+
+3. Build the Rust plugin:
+
+   ```bash
+   cargo build
+   ```
+
+### Tests
+
+Run Rust tests:
+
+```bash
+cargo test
+```
+
+## Install
+
+_This plugin requires a Rust version of at least **1.77.2**_
 
 ### Rust
 
-Add the `tauri-plugin-download` crate to your `Cargo.toml`:
+Add the plugin to your `Cargo.toml`:
+
+`src-tauri/Cargo.toml`
 
 ```toml
 [dependencies]
-tauri-plugin-download = { git = "https://github.com/silvermine/tauri-plugin-download.git" }
+tauri-plugin-download = { git = "https://github.com/silvermine/tauri-plugin-download" }
 ```
 
-### TypeScript
+### JavaScript/TypeScript
 
-Install the TypeScript bindings via npm:
+Install the JavaScript bindings:
 
-```bash
-npm install github:@silvermine/tauri-plugin-download
+```sh
+npm install @silvermine/tauri-plugin-download
 ```
 
 ## Usage
@@ -137,13 +179,28 @@ async function getDownloadAndListen() {
 Check out the [examples/tauri-app](examples/tauri-app) directory for a working example of
 how to use this plugin.
 
-## How do I contribute?
+## Development Standards
 
-We genuinely appreciate external contributions. See [our extensive
-documentation](https://github.com/silvermine/silvermine-info#contributing) on how to
-contribute.
+This project follows the
+[Silvermine standardization](https://github.com/silvermine/standardization)
+guidelines. Key standards include:
+
+   * **EditorConfig**: Consistent editor settings across the team
+   * **Markdownlint**: Markdown linting for documentation
+   * **Commitlint**: Conventional commit message format
+   * **Code Style**: 3-space indentation, LF line endings
+
+### Running Standards Checks
+
+```bash
+npm run standards
+```
 
 ## License
 
-This software is released under the MIT license. See [the license file](LICENSE) for more
-details.
+MIT
+
+## Contributing
+
+Contributions are welcome! Please follow the established coding standards and commit
+message conventions.
