@@ -18,7 +18,7 @@ let package = Package(
     ],
     dependencies: [
         .package(name: "DownloadManagerKit", path: "../ios-src/DownloadManagerKit"),
-        .package(name: "Tauri", path: "../ios-src/tauri-api")
+        .package(name: "Tauri", path: "../.tauri/tauri-api")
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
