@@ -9,18 +9,16 @@ import Foundation
 /// Used to track the status and progress of a download operation.
 public final class DownloadItem: ObservableObject, Identifiable, Codable {
    enum CodingKeys: CodingKey {
-      case key, url, path, progress, status, resumeDataPath
+      case url, path, progress, status, resumeDataPath
    }
    
-   public let key: String
    public let url: URL
    public let path: URL
    @Published public private(set) var progress: Double
    @Published public private(set) var status: DownloadStatus
    public var resumeDataPath: URL?
    
-   init(key: String, url: URL, path: URL, progress: Double = 0.0, status: DownloadStatus = .idle, resumeDataPath: URL? = nil) {
-      self.key = key
+   init(url: URL, path: URL, progress: Double = 0.0, status: DownloadStatus = .idle, resumeDataPath: URL? = nil) {
       self.url = url
       self.path = path
       self.progress = progress
@@ -30,7 +28,6 @@ public final class DownloadItem: ObservableObject, Identifiable, Codable {
    
    public required init(from decoder: Decoder) throws {
       let container = try decoder.container(keyedBy: CodingKeys.self)
-      key = try container.decode(String.self, forKey: .key)
       url = try container.decode(URL.self, forKey: .url)
       path = try container.decode(URL.self, forKey: .path)
       progress = try container.decode(Double.self, forKey: .progress)
@@ -48,7 +45,6 @@ public final class DownloadItem: ObservableObject, Identifiable, Codable {
    
    public func encode(to encoder: Encoder) throws {
       var container = encoder.container(keyedBy: CodingKeys.self)
-      try container.encode(key, forKey: .key)
       try container.encode(url, forKey: .url)
       try container.encode(path, forKey: .path)
       try container.encode(progress, forKey: .progress)

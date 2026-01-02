@@ -24,29 +24,29 @@ export async function list(): Promise<DownloadWithAnyStatus[]> {
 }
 
 /**
- * Gets a download by key.
+ * Gets a download by path.
  *
  * If the download exists in the store, returns it. If not found, returns a download in
  * {@link DownloadStatus.Pending} state (not persisted to store).
  *
  * A `Pending` download can have listeners attached and must be explicitly created via
- * `download.create(url, path)` to persist it to the store and transition to `Idle` state.
+ * `download.create(url)` to persist it to the store and transition to `Idle` state.
  *
- * @param key - Unique identifier for the download.
+ * @param path - The download path.
  * @returns The download operation.
  *
  * @example
  * ```ts
- * const download = await get('my-download');
+ * const download = await get('example/file.zip');
  * if (download.status === DownloadStatus.Pending) {
  *    await download.listen((d) => console.log(d.progress));
- *    const { download: created } = await download.create(url, path);
+ *    const { download: created } = await download.create('https://example.com/file.zip');
  *    await created.start();
  * }
  * ```
  */
-export async function get(key: string): Promise<DownloadWithAnyStatus> {
-   const download = await invoke<DownloadState<DownloadStatus>>('plugin:download|get', { key });
+export async function get(path: string): Promise<DownloadWithAnyStatus> {
+   const download = await invoke<DownloadState<DownloadStatus>>('plugin:download|get', { path });
 
    return attachDownload(download);
 }

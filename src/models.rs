@@ -4,23 +4,21 @@ use std::fmt;
 #[cfg(mobile)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct KeyArgs {
-   pub key: String,
+pub struct PathArgs {
+   pub path: String,
 }
 
 #[cfg(mobile)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateArgs {
-   pub key: String,
-   pub url: String,
    pub path: String,
+   pub url: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadItem {
-   pub key: String,
    pub url: String,
    pub path: String,
    pub progress: f64,
@@ -70,20 +68,12 @@ impl DownloadActionResponse {
 
 #[cfg(any(desktop, target_os = "android"))]
 pub trait DownloadItemExt {
-   fn with_path(&self, new_path: String) -> DownloadItem;
    fn with_progress(&self, new_progress: f64) -> DownloadItem;
    fn with_status(&self, new_status: DownloadStatus) -> DownloadItem;
 }
 
 #[cfg(any(desktop, target_os = "android"))]
 impl DownloadItemExt for DownloadItem {
-   fn with_path(&self, new_path: String) -> DownloadItem {
-      DownloadItem {
-         path: new_path,
-         ..self.clone() // Clone the rest of the fields
-      }
-   }
-
    fn with_progress(&self, new_progress: f64) -> DownloadItem {
       DownloadItem {
          progress: new_progress,

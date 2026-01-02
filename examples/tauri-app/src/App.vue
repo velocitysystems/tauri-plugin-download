@@ -25,7 +25,7 @@
       </form>
       <!-- Manage Downloads -->
       <div class="download-list">
-         <DownloadView v-for="item in downloads" :key="item.download.key" v-bind="item" />
+         <DownloadView v-for="item in downloads" :key="item.download.path" v-bind="item" />
       </div>
    </main>
 </template>
@@ -39,7 +39,6 @@ import DownloadView from './DownloadView.vue';
 interface DownloadViewItem {
    download: DownloadWithAnyStatus;
    url?: string;
-   path?: string;
 }
 
 const downloadURL = ref(''),
@@ -53,24 +52,24 @@ onMounted(async () => {
 });
 
 async function getDownload() {
-   const key = getFilenameFromURL(downloadURL.value);
+   const filename = getFilenameFromURL(downloadURL.value);
 
-   if (!key) {
+   if (!filename) {
       console.error('Could not get filename from URL', downloadURL.value);
       return;
    }
 
-   const path = await join(await appDataDir(), 'downloads', key);
+   const path = await join(await appDataDir(), 'downloads', filename);
 
-   let download = await get(key);
+   let download = await get(path);
 
    if (download.status === DownloadStatus.Pending && autoCreate.value) {
-      const { download: created } = await download.create(downloadURL.value, path);
+      const { download: created } = await download.create(downloadURL.value);
 
       download = created;
    }
 
-   downloads.value?.push({ download, url: downloadURL.value, path });
+   downloads.value?.push({ download, url: downloadURL.value });
    downloadURL.value = '';
 }
 

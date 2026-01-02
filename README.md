@@ -109,7 +109,7 @@ async function listDownloads() {
    const downloads = await list();
 
    for (const download of downloads) {
-      console.debug(`Found '${download.key}': [${download.status}, ${download.progress}%]`);
+      console.debug(`Found '${download.path}': [${download.status}, ${download.progress}%]`);
    }
 }
 ```
@@ -120,12 +120,12 @@ async function listDownloads() {
 import { get, DownloadStatus } from 'tauri-plugin-download';
 
 async function getDownload() {
-   const download = await get('file.zip');
+   const download = await get('/path/to/file.zip');
 
    if (download.status === DownloadStatus.Pending) {
-      console.debug(`Download '${download.key}' not found in store`);
+      console.debug(`Download '${download.path}' not found in store`);
    } else {
-      console.debug(`Found '${download.key}': [${download.status}, ${download.progress}%]`);
+      console.debug(`Found '${download.path}': [${download.status}, ${download.progress}%]`);
    }
 }
 ```
@@ -139,20 +139,17 @@ Only valid methods are available based on the download's status.
 import { get, DownloadStatus, hasAction, DownloadAction } from 'tauri-plugin-download';
 
 async function createAndStartDownload() {
-   const download = await get('file.zip');
+   const download = await get('/path/to/file.zip');
 
    if (download.status === DownloadStatus.Pending) {
       // Download not in store - create it first
-      const { download: created } = await download.create(
-         'https://example.com/file.zip',
-         '/path/to/file.zip'
-      );
+      const { download: created } = await download.create('https://example.com/file.zip');
       await created.start();
    }
 }
 
 async function manageDownload() {
-   const download = await get('file.zip');
+   const download = await get('/path/to/file.zip');
 
    if (hasAction(download, DownloadAction.Start)) {
       await download.start(); // TypeScript knows start() is available
@@ -173,19 +170,16 @@ This allows you to set up listeners before creating the download.
 import { get, DownloadStatus } from 'tauri-plugin-download';
 
 async function setupAndStartDownload() {
-   const download = await get('file.zip');
+   const download = await get('/path/to/file.zip');
 
    // Attach listener (works for Pending downloads too)
    const unlisten = await download.listen((updated) => {
-      console.debug(`'${updated.key}': ${updated.progress}%`);
+      console.debug(`'${updated.path}': ${updated.progress}%`);
    });
 
    // Create and start if pending
    if (download.status === DownloadStatus.Pending) {
-      const { download: created } = await download.create(
-         'https://example.com/file.zip',
-         '/path/to/file.zip'
-      );
+      const { download: created } = await download.create('https://example.com/file.zip');
       await created.start();
    }
 

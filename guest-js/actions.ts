@@ -20,18 +20,18 @@ class DownloadEventManager {
    /**
     * Adds a listener for download events
     *
-    * @param key The key of the download item to listen for
+    * @param path The path of the download item to listen for
     * @param listener The callback function to invoke when the download changes
     * @returns A promise with a function to remove this specific listener
     */
-   public async addListener(key: string, listener: (download: DownloadWithAnyStatus) => void): Promise<() => void> {
+   public async addListener(path: string, listener: (download: DownloadWithAnyStatus) => void): Promise<() => void> {
       await this._ensureGlobalListeners();
 
-      if (!this._listeners.has(key)) {
-         this._listeners.set(key, new Set());
+      if (!this._listeners.has(path)) {
+         this._listeners.set(path, new Set());
       }
 
-      const listenersForKey = this._listeners.get(key);
+      const listenersForKey = this._listeners.get(path);
 
       if (listenersForKey) {
          listenersForKey.add(listener);
@@ -39,14 +39,14 @@ class DownloadEventManager {
 
       // Return a function to remove this specific listener
       return () => {
-         const listeners = this._listeners.get(key);
+         const listeners = this._listeners.get(path);
 
          if (listeners) {
             listeners.delete(listener);
 
-            // If no more listeners for this key, remove the key from the map.
+            // If no more listeners for this path, remove the path from the map.
             if (listeners.size === 0) {
-               this._listeners.delete(key);
+               this._listeners.delete(path);
             }
          }
 
@@ -65,17 +65,17 @@ class DownloadEventManager {
 
       if (isNative) {
          this._pluginListener = await addPluginListener('download', 'changed', (event: DownloadState<DownloadStatus>) => {
-            this._notifyListeners(event.key, event);
+            this._notifyListeners(event.path, event);
          });
       } else {
          this._eventUnlistenFn = await listen<DownloadState<DownloadStatus>>('tauri-plugin-download:changed', (event) => {
-            this._notifyListeners(event.payload.key, event.payload);
+            this._notifyListeners(event.payload.path, event.payload);
          });
       }
    }
 
-   private _notifyListeners(key: string, event: DownloadState<DownloadStatus>): void {
-      const listeners = this._listeners.get(key);
+   private _notifyListeners(path: string, event: DownloadState<DownloadStatus>): void {
+      const listeners = this._listeners.get(path);
 
       if (listeners) {
          // eslint-disable-next-line @typescript-eslint/no-use-before-define
@@ -110,27 +110,27 @@ async function sendAction<A extends DownloadAction>(action: A, args: Record<stri
 
 const actions = {
    listen(listener: (download: DownloadWithAnyStatus) => void): Promise<UnlistenFn> {
-      return DownloadEventManager.shared.addListener(this.key, listener);
+      return DownloadEventManager.shared.addListener(this.path, listener);
    },
 
-   async create(url: string, path: string) {
-      return sendAction(DownloadAction.Create, { key: this.key, url, path });
+   async create(url: string) {
+      return sendAction(DownloadAction.Create, { path: this.path, url });
    },
 
    async start() {
-      return sendAction(DownloadAction.Start, { key: this.key });
+      return sendAction(DownloadAction.Start, { path: this.path });
    },
 
    async resume() {
-      return sendAction(DownloadAction.Resume, { key: this.key });
+      return sendAction(DownloadAction.Resume, { path: this.path });
    },
 
    async pause() {
-      return sendAction(DownloadAction.Pause, { key: this.key });
+      return sendAction(DownloadAction.Pause, { path: this.path });
    },
 
    async cancel() {
-      return sendAction(DownloadAction.Cancel, { key: this.key });
+      return sendAction(DownloadAction.Cancel, { path: this.path });
    },
 } satisfies AllDownloadActions & ThisType<DownloadState<DownloadStatus>>;
 
@@ -141,7 +141,6 @@ const actions = {
  */
 export function attachDownload<S extends DownloadStatus>(state: DownloadState<S>): Download<S> {
    const download = {
-      key: state.key,
       url: state.url,
       path: state.path,
       progress: state.progress,

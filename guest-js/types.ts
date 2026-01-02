@@ -49,7 +49,6 @@ export enum DownloadAction {
 }
 
 export interface DownloadState<S extends DownloadStatus> {
-   key: string;
    url: string;
    path: string;
    progress: number;
@@ -76,7 +75,7 @@ export interface AllDownloadActions {
     * ```ts
     * const unlisten = await download.listen((updatedDownload) => {
     *   console.log('Download:', updatedDownload);
-    *   if (updatedDownload.status === DownloadStatus.PAUSED) {
+    *   if (updatedDownload.status === DownloadStatus.Paused) {
     *     updatedDownload.resume(); // TypeScript knows this is valid
     *   }
     * });
@@ -86,7 +85,7 @@ export interface AllDownloadActions {
     * ```
     */
    [DownloadAction.Listen]: (listener: (download: DownloadWithAnyStatus) => void) => Promise<UnlistenFn>;
-   [DownloadAction.Create]: (url: string, path: string) => Promise<DownloadActionResponse<DownloadAction.Create>>;
+   [DownloadAction.Create]: (url: string) => Promise<DownloadActionResponse<DownloadAction.Create>>;
    [DownloadAction.Start]: () => Promise<DownloadActionResponse<DownloadAction.Start>>;
    [DownloadAction.Resume]: () => Promise<DownloadActionResponse<DownloadAction.Resume>>;
    [DownloadAction.Pause]: () => Promise<DownloadActionResponse<DownloadAction.Pause>>;
@@ -119,7 +118,7 @@ export const allowedActions = {
    [DownloadStatus.Unknown]: [
       DownloadAction.Listen,
    ],
-} satisfies Record<DownloadStatus, DownloadAction[] | []>;
+} as const satisfies Record<DownloadStatus, DownloadAction[] | []>;
 
 export const expectedStatusesForAction = {
    [DownloadAction.Create]: [ DownloadStatus.Idle ],
@@ -137,7 +136,7 @@ export const expectedStatusesForAction = {
       DownloadStatus.Cancelled,
       DownloadStatus.Completed,
    ],
-} satisfies Record<DownloadAction, DownloadStatus[] | []>;
+} as const satisfies Record<DownloadAction, DownloadStatus[] | []>;
 
 type ActionsFns<S extends DownloadStatus> = Pick<AllDownloadActions, typeof allowedActions[S][number]>;
 type AllowedActionsForStatus<S extends DownloadStatus> = ActionsFns<S> extends never ? object : ActionsFns<S>;
@@ -157,7 +156,7 @@ export type Download<S extends DownloadStatus> = DownloadState<S> & AllowedActio
  * }
  *
  * // Or:
- * if (download.status === DownloadStatus.Created) {
+ * if (download.status === DownloadStatus.Idle) {
  *   await download.start(); // TypeScript knows start() is available
  * }
  * ```
@@ -170,9 +169,7 @@ export type UnexpectedStatusesForAction<A extends DownloadAction> = Exclude<Down
 export type ExpectedStatesForAction<A extends DownloadAction> = Extract<DownloadWithAnyStatus, Pick<AllDownloadActions, A>>;
 export type UnexpectedStatesForAction<A extends DownloadAction> = Exclude<DownloadWithAnyStatus, ExpectedStatesForAction<A>>;
 
-type DownloadsWithAction<A extends DownloadAction> = Extract<DownloadWithAnyStatus, Pick<AllDownloadActions, A>>;
-
-export function hasAction<A extends DownloadAction>(download: DownloadWithAnyStatus, actionName: A): download is DownloadsWithAction<A> {
+export function hasAction<A extends DownloadAction>(download: DownloadWithAnyStatus, actionName: A): download is Extract<DownloadWithAnyStatus, Pick<AllDownloadActions, A>> {
    return (allowedActions[download.status] as DownloadAction[]).includes(actionName);
 }
 

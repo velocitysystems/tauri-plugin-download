@@ -8,8 +8,7 @@ import SwiftUI
 import DownloadManagerKit
 
 struct PendingDownload: Identifiable {
-   var id: String { key }
-   let key: String
+   var id: String { path.path }
    let url: URL
    let path: URL
 }
@@ -23,7 +22,7 @@ struct DownloadsView: View {
    init() {
       Task {
          for await download in DownloadManager.shared.changed {
-            print("[\(download.key)] \(download.status) - \(String(format: "%.0f", download.progress))%")
+            print("[\(download.path)] \(download.status) - \(String(format: "%.0f", download.progress))%")
          }
       }
    }
@@ -61,7 +60,7 @@ struct DownloadsView: View {
             List {
                ForEach(pendingDownloads) { pending in
                   PendingDownloadRowView(pending: pending, manager: manager, onCreated: {
-                     pendingDownloads.removeAll { $0.key == pending.key }
+                     pendingDownloads.removeAll { $0.path == pending.path }
                   })
                }
                ForEach(manager.downloads) { item in
@@ -83,13 +82,13 @@ struct DownloadsView: View {
       let filename = url.lastPathComponent
       let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(filename)
       
-      let download = manager.get(key: filename)
+      let download = manager.get(path: path)
       
       if download.status == .pending {
          if autoCreate {
-            _ = manager.create(key: filename, url: url, path: path)
+            _ = manager.create(path: path, url: url)
          } else {
-            pendingDownloads.append(PendingDownload(key: filename, url: url, path: path))
+            pendingDownloads.append(PendingDownload(url: url, path: path))
          }
       }
       
@@ -104,14 +103,14 @@ struct PendingDownloadRowView: View {
    
    var body: some View {
       VStack(alignment: .leading) {
-         Text(pending.key)
+         Text(pending.path.lastPathComponent)
             .font(.headline)
          Text("Status: pending")
             .font(.caption)
             .foregroundColor(.secondary)
          
          Button(action: {
-            _ = manager.create(key: pending.key, url: pending.url, path: pending.path)
+            _ = manager.create(path: pending.path, url: pending.url)
             onCreated()
          }) {
             Text("Create")
@@ -130,7 +129,7 @@ struct DownloadRowView: View {
    
    var body: some View {
       VStack(alignment: .leading) {
-         Text(item.key)
+         Text(item.path.lastPathComponent)
             .font(.headline)
          ProgressView(value: item.progress / 100)
             .progressViewStyle(LinearProgressViewStyle())
@@ -141,13 +140,13 @@ struct DownloadRowView: View {
          switch item.status {
          case .idle:
             HStack(spacing: 8) {
-               Button(action: { _ = try? manager.start(key: item.key) }) {
+               Button(action: { _ = try? manager.start(path: item.path) }) {
                   Text("Start")
                      .padding(8)
                      .background(Color.blue.opacity(0.2))
                      .cornerRadius(8)
                }.buttonStyle(PlainButtonStyle())
-               Button(action: { _ = try? manager.cancel(key: item.key) }) {
+               Button(action: { _ = try? manager.cancel(path: item.path) }) {
                   Text("Cancel")
                      .padding(8)
                      .background(Color.red.opacity(0.2))
@@ -156,13 +155,13 @@ struct DownloadRowView: View {
             }
          case .inProgress:
             HStack(spacing: 8) {
-               Button(action: { _ = try? manager.pause(key: item.key) }) {
+               Button(action: { _ = try? manager.pause(path: item.path) }) {
                   Text("Pause")
                      .padding(8)
                      .background(Color.blue.opacity(0.2))
                      .cornerRadius(8)
                }.buttonStyle(PlainButtonStyle())
-               Button(action: { _ = try? manager.cancel(key: item.key) }) {
+               Button(action: { _ = try? manager.cancel(path: item.path) }) {
                   Text("Cancel")
                      .padding(8)
                      .background(Color.red.opacity(0.2))
@@ -171,13 +170,13 @@ struct DownloadRowView: View {
             }
          case .paused:
             HStack(spacing: 8) {
-               Button(action: { _ = try? manager.resume(key: item.key) }) {
+               Button(action: { _ = try? manager.resume(path: item.path) }) {
                   Text("Resume")
                      .padding(8)
                      .background(Color.blue.opacity(0.2))
                      .cornerRadius(8)
                }.buttonStyle(PlainButtonStyle())
-               Button(action: { _ = try? manager.cancel(key: item.key) }) {
+               Button(action: { _ = try? manager.cancel(path: item.path) }) {
                   Text("Cancel")
                      .padding(8)
                      .background(Color.red.opacity(0.2))

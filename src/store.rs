@@ -22,12 +22,12 @@ pub fn list<R: Runtime>(app: &AppHandle<R>) -> crate::Result<Vec<DownloadItem>> 
    Ok(items)
 }
 
-pub fn get<R: Runtime>(app: &AppHandle<R>, key: String) -> crate::Result<Option<DownloadItem>> {
+pub fn get<R: Runtime>(app: &AppHandle<R>, path: String) -> crate::Result<Option<DownloadItem>> {
    let store = app
       .store(DOWNLOAD_STORE_PATH)
       .map_err(|e| Error::Store(format!("Failed to load store: {}", e)))?;
 
-   match store.get(&key) {
+   match store.get(&path) {
       Some(value) => Ok(Some(serde_json::from_value(value).unwrap())),
       None => Ok(None),
    }
@@ -38,15 +38,15 @@ pub fn create<R: Runtime>(app: &AppHandle<R>, item: DownloadItem) -> crate::Resu
       .store(DOWNLOAD_STORE_PATH)
       .map_err(|e| Error::Store(format!("Failed to load store: {}", e)))?;
 
-   match store.get(&item.key) {
+   match store.get(&item.path) {
       Some(_) => {
          return Err(Error::Store(format!(
-            "Item already exists for key: {}",
-            &item.key
+            "Item already exists for path: {}",
+            &item.path
          )));
       }
       None => {
-         store.set(&item.key, serde_json::to_value(&item).unwrap());
+         store.set(&item.path, serde_json::to_value(&item).unwrap());
          store
             .save()
             .map_err(|e| Error::Store(format!("Failed to save store: {}", e)))?;
@@ -61,7 +61,7 @@ pub fn update<R: Runtime>(app: &AppHandle<R>, item: DownloadItem) -> crate::Resu
       .store(DOWNLOAD_STORE_PATH)
       .map_err(|e| Error::Store(format!("Failed to load store: {}", e)))?;
 
-   store.set(&item.key, serde_json::to_value(&item).unwrap());
+   store.set(&item.path, serde_json::to_value(&item).unwrap());
    store
       .save()
       .map_err(|e| Error::Store(format!("Failed to save store: {}", e)))?;

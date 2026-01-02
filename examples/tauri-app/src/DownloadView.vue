@@ -1,7 +1,7 @@
 <template>
    <div class="download-item">
       <div class="item-header">
-         <h3 class="item-name">{{ currentDownload?.key }}</h3>
+         <h3 class="item-name">{{ currentDownload?.path?.split('/').pop() }}</h3>
          <div class="item-actions" v-if="showActions">
             <button class="btn create-btn" type="button" @click="doCreate" v-if="canCreate">Create</button>
             <button class="btn start-btn" type="button" @click="doAction(DownloadAction.Start)" v-if="canStart">Start</button>
@@ -10,6 +10,7 @@
             <button class="btn resume-btn" type="button" @click="doAction(DownloadAction.Resume)" v-if="canResume">Resume</button>
          </div>
       </div>
+      <p class="item-path">{{ currentDownload?.path }}</p>
       <div class="progress-bar">
          <div class="progress" :style="{ width: currentDownload.progress + '%' }" />
       </div>
@@ -31,7 +32,7 @@ import {
 } from 'tauri-plugin-download';
 import { UnlistenFn } from '@tauri-apps/api/event';
 
-const props = defineProps<{ download: DownloadWithAnyStatus, url?: string, path?: string }>(),
+const props = defineProps<{ download: DownloadWithAnyStatus, url?: string }>(),
       currentDownload = ref<DownloadWithAnyStatus>(props.download),
       showActions = computed(() => { return hasAnyAction(currentDownload.value); }),
       canCreate = computed(() => { return hasAction(currentDownload.value, DownloadAction.Create); }),
@@ -117,11 +118,11 @@ function handleUnexpectedStatus(action: DownloadAction, result: DownloadActionRe
 }
 
 async function doCreate(): Promise<void> {
-   if (!hasAction(currentDownload.value, DownloadAction.Create) || !props.url || !props.path) {
+   if (!hasAction(currentDownload.value, DownloadAction.Create) || !props.url) {
       return;
    }
 
-   const result = await currentDownload.value.create(props.url, props.path);
+   const result = await currentDownload.value.create(props.url);
 
    currentDownload.value = result.download;
 
@@ -201,5 +202,13 @@ async function doAction<A extends NoArgAction>(action: A): Promise<void> {
   .state-text {
     font-size: 14px;
     color: #555;
+  }
+
+  .item-path {
+    font-size: 12px;
+    color: #888;
+    margin: 0 0 10px 0;
+    text-align: left;
+    word-break: break-all;
   }
   </style>
