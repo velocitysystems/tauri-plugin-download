@@ -88,6 +88,61 @@ describe('mockDownloadPlugin', () => {
       unlisten();
    });
 
+   it('resets listener state when clearing download mocks', async () => {
+      const firstController = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(DownloadStatus.Idle, {
+               path: '/tmp/first-listener.zip',
+            }),
+         ],
+      });
+
+      const firstDownload = await get('/tmp/first-listener.zip');
+
+      const firstListener = vi.fn();
+
+      if (!hasAction(firstDownload, DownloadAction.Listen)) {
+         throw new Error('expected listen action');
+      }
+
+      await firstDownload.listen(firstListener);
+
+      await firstController.emitChange(createMockDownloadState(DownloadStatus.InProgress, {
+         path: '/tmp/first-listener.zip',
+         progress: 10,
+      }));
+
+      expect(firstListener).toHaveBeenCalledTimes(1);
+
+      clearDownloadMocks();
+
+      const secondController = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(DownloadStatus.Idle, {
+               path: '/tmp/second-listener.zip',
+            }),
+         ],
+      });
+
+      const secondDownload = await get('/tmp/second-listener.zip');
+
+      const secondListener = vi.fn();
+
+      if (!hasAction(secondDownload, DownloadAction.Listen)) {
+         throw new Error('expected listen action');
+      }
+
+      const unlisten = await secondDownload.listen(secondListener);
+
+      await secondController.emitChange(createMockDownloadState(DownloadStatus.InProgress, {
+         path: '/tmp/second-listener.zip',
+         progress: 20,
+      }));
+
+      expect(secondListener).toHaveBeenCalledTimes(1);
+      unlisten();
+   });
+
    it('allows command errors to be injected per action', async () => {
       const controller = mockDownloadPlugin({
          downloads: [

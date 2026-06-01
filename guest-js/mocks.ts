@@ -1,5 +1,6 @@
 import { emit } from '@tauri-apps/api/event';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
+import { DOWNLOAD_EVENT_NAME, resetDownloadEventManager } from './actions';
 import {
    DownloadAction,
    type DownloadActionResponse,
@@ -42,8 +43,6 @@ export interface MockDownloadPluginController {
 type MockActionResponse<A extends DownloadAction> = Omit<DownloadActionResponse<A>, 'download'> & {
    download: DownloadState<DownloadStatus>;
 };
-
-const DOWNLOAD_EVENT_NAME = 'tauri-plugin-download:changed';
 
 const DEFAULT_URL = 'https://example.com/file.zip';
 
@@ -133,7 +132,8 @@ export function createMockDownloadState(
 }
 
 export function clearDownloadMocks(): void {
-   return clearMocks();
+   resetDownloadEventManager();
+   clearMocks();
 }
 
 export function mockDownloadPlugin(

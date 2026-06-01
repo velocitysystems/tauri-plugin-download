@@ -5,6 +5,8 @@ import {
    DownloadStatus, DownloadWithAnyStatus, isTerminal, ListenOptions,
 } from './types';
 
+export const DOWNLOAD_EVENT_NAME = 'tauri-plugin-download:changed';
+
 /**
  * Manages subscriptions to download events from Rust and mobile plugins (iOS/Android),
  * and dispatching these events to registered listeners.
@@ -54,6 +56,11 @@ class DownloadEventManager {
       };
    }
 
+   public reset(): void {
+      this._listeners.clear();
+      this._cleanupGlobalListeners();
+   }
+
    private async _ensureGlobalListeners(): Promise<void> {
       if (this._eventUnlistenFn || this._pluginListener) {
          return;
@@ -68,7 +75,7 @@ class DownloadEventManager {
             this._notifyListeners(event.path, event);
          });
       } else {
-         this._eventUnlistenFn = await listen<DownloadState<DownloadStatus>>('tauri-plugin-download:changed', (event) => {
+         this._eventUnlistenFn = await listen<DownloadState<DownloadStatus>>(DOWNLOAD_EVENT_NAME, (event) => {
             this._notifyListeners(event.payload.path, event.payload);
          });
       }
@@ -98,6 +105,10 @@ class DownloadEventManager {
          this._pluginListener = null;
       }
    }
+}
+
+export function resetDownloadEventManager(): void {
+   DownloadEventManager.shared.reset();
 }
 
 export function wrapListenerWithAutoUnlisten(
