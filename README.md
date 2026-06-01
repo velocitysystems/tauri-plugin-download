@@ -219,6 +219,58 @@ await download.listen((updated) => {
 Check out the [examples/tauri-app](examples/tauri-app) directory for a working example of
 how to use this plugin.
 
+### Testing with mocks
+
+For unit tests, this package publishes `@silvermine/tauri-plugin-download/mocks` so you
+can keep using the real JavaScript API while mocking the Tauri backend.
+
+This helper is designed for tests that need to:
+
+   * Seed one or more downloads before the test runs
+   * Exercise `get()`, `list()`, and download actions without a real Tauri app
+   * Emit download change events for listener tests
+   * Inject command errors for failure scenarios
+
+```ts
+import { afterEach, expect, it } from 'vitest';
+import {
+   DownloadAction,
+   DownloadStatus,
+   get,
+   hasAction,
+} from '@silvermine/tauri-plugin-download';
+import {
+   clearDownloadMocks,
+   createMockDownloadState,
+   mockDownloadPlugin,
+} from '@silvermine/tauri-plugin-download/mocks';
+
+afterEach(() => {
+   clearDownloadMocks();
+});
+
+it('starts a mocked download', async () => {
+   mockDownloadPlugin({
+      downloads: [
+         createMockDownloadState(DownloadStatus.Idle, {
+            path: '/tmp/file.zip',
+         }),
+      ],
+   });
+
+   const download = await get('/tmp/file.zip');
+
+   if (hasAction(download, DownloadAction.Start)) {
+      const response = await download.start();
+
+      expect(response.download.status).toBe(DownloadStatus.InProgress);
+   }
+});
+```
+
+The mock helper currently simulates the desktop event flow and returns `false` for
+`is_native`.
+
 ## Development Standards
 
 This project follows the
