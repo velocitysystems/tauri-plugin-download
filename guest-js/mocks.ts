@@ -28,15 +28,76 @@ export interface MockDownloadPluginOptions {
    downloads?: DownloadState<DownloadStatus>[];
 }
 
+/**
+ * Controls the mocked download plugin state and invocation history during tests.
+ */
 export interface MockDownloadPluginController {
+
+   /**
+    * Clears a previously configured error for a mocked command.
+    *
+    * @param command - The command whose mocked error should be removed.
+    */
    clearCommandError(command: MockDownloadCommand): void;
+
+   /**
+    * Removes a mocked download from the in-memory store.
+    *
+    * @param path - The download path to remove.
+    * @returns `true` if a download existed for the path and was removed.
+    */
    deleteDownload(path: string): boolean;
+
+   /**
+    * Updates a mocked download and emits the corresponding change event.
+    *
+    * @param download - The download state to store and broadcast.
+    * @returns A promise that resolves after the change event is emitted.
+    */
    emitChange(download: DownloadState<DownloadStatus>): Promise<void>;
+
+   /**
+    * Gets the mocked download state for a path.
+    *
+    * @param path - The download path to look up.
+    * @returns The stored download, or a pending download when none exists yet.
+    */
    getDownload(path: string): DownloadState<DownloadStatus>;
+
+   /**
+    * Gets a snapshot of all mocked plugin invocations.
+    *
+    * @returns The recorded invocations in call order.
+    */
    getInvocations(): MockDownloadInvocation[];
+
+   /**
+    * Gets the most recent mocked plugin invocation.
+    *
+    * @returns The last recorded invocation, or `null` if none have occurred.
+    */
    getLastInvocation(): MockDownloadInvocation | null;
+
+   /**
+    * Lists all mocked downloads currently stored in memory.
+    *
+    * @returns The mocked downloads.
+    */
    listDownloads(): DownloadState<DownloadStatus>[];
+
+   /**
+    * Configures a mocked command to throw the provided error when invoked.
+    *
+    * @param command - The command that should fail.
+    * @param error - The error instance or message to throw.
+    */
    setCommandError(command: MockDownloadCommand, error: Error | string): void;
+
+   /**
+    * Stores or replaces a mocked download without emitting a change event.
+    *
+    * @param download - The download state to store.
+    */
    setDownload(download: DownloadState<DownloadStatus>): void;
 }
 
@@ -119,6 +180,13 @@ function createTransitionDownload(
    };
 }
 
+/**
+ * Creates a mock download state object for tests.
+ *
+ * @param status - The download status to assign to the mock state.
+ * @param overrides - Optional properties to override on the generated state.
+ * @returns A mock download state with defaults for unspecified fields.
+ */
 export function createMockDownloadState(
    status: DownloadStatus,
    overrides: Partial<DownloadState<DownloadStatus>> = {}
@@ -131,11 +199,24 @@ export function createMockDownloadState(
    };
 }
 
+/**
+ * Clears all configured Tauri mocks used by the download guest API tests.
+ */
 export function clearDownloadMocks(): void {
    resetDownloadEventManager();
    clearMocks();
 }
 
+/**
+ * Configures Tauri IPC mocks for unit tests that exercise the guest JS download API.
+ *
+ * This helper approximates backend/native state transitions for common test flows.
+ * It is not a backend contract and does not transition downloads to `Completed`.
+ * Use `emitChange()` or `setDownload()` to simulate progress updates or terminal states.
+ *
+ * @param options Initial mocked download state.
+ * @return Controller for inspecting invocations and mutating mocked download state.
+ */
 export function mockDownloadPlugin(
    options: MockDownloadPluginOptions = {}
 ): MockDownloadPluginController {

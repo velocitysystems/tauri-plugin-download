@@ -107,6 +107,9 @@ class DownloadEventManager {
    }
 }
 
+/**
+ * @internal
+ */
 export function resetDownloadEventManager(): void {
    DownloadEventManager.shared.reset();
 }

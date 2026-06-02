@@ -231,6 +231,11 @@ This helper is designed for tests that need to:
    * Emit download change events for listener tests
    * Inject command errors for failure scenarios
 
+The mock helper approximates backend/native state transitions for common test flows.
+It is not a backend contract and does not transition downloads to `Completed`.
+Use `emitChange()` to simulate progress updates or terminal-state events, or
+`setDownload()` to seed a specific state without emitting an event.
+
 ```ts
 import { afterEach, expect, it } from 'vitest';
 import {
