@@ -235,6 +235,10 @@ The mock helper approximates backend/native state transitions for common test fl
 It is not a backend contract and does not transition downloads to `Completed`.
 Use `emitChange()` to simulate progress updates or terminal-state events, or
 `setDownload()` to seed a specific state without emitting an event.
+It only simulates the desktop event path and returns `false` for `is_native`,
+so tests for the native/mobile listener branch need a separate approach. When
+emitting a `Completed` state, include `progress: 100` yourself because the mock
+does not normalize terminal-state progress.
 
 ```ts
 import { afterEach, expect, it } from 'vitest';

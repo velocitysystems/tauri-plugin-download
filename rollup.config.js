@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { cwd } from 'process';
 import typescript from '@rollup/plugin-typescript';
 
@@ -23,7 +23,7 @@ function buildConfig(input, output) {
       plugins: [
          typescript({
             declaration: true,
-            declarationDir: `./${output.import.split('/')[1]}`,
+            declarationDir: dirname(output.import),
          }),
       ],
       external: [

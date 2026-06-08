@@ -1,11 +1,61 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { invoke } from '@tauri-apps/api/core';
 import { get, list } from './index';
 import { clearDownloadMocks, createMockDownloadState, mockDownloadPlugin } from './mocks';
-import { DownloadAction, DownloadStatus, hasAction } from './types';
+import {
+   allowedActions,
+   DownloadAction,
+   type DownloadActionResponse,
+   DownloadStatus,
+   expectedStatusesForAction,
+   hasAction,
+} from './types';
 
 afterEach(() => {
    clearDownloadMocks();
 });
+
+const ACTIONS = [
+   DownloadAction.Create,
+   DownloadAction.Start,
+   DownloadAction.Resume,
+   DownloadAction.Pause,
+   DownloadAction.Cancel,
+] as const;
+
+const STATUSES = [
+   DownloadStatus.Pending,
+   DownloadStatus.Idle,
+   DownloadStatus.InProgress,
+   DownloadStatus.Paused,
+   DownloadStatus.Canceled,
+   DownloadStatus.Completed,
+   DownloadStatus.Unknown,
+] as const;
+
+const ACTION_STATUS_CASES = ACTIONS.flatMap((action) => {
+   return STATUSES.map((status) => {
+      return [ action, status ] as const;
+   });
+});
+
+function getExpectedStatus(action: Exclude<DownloadAction, DownloadAction.Listen>): DownloadStatus {
+   const expectedStatus = expectedStatusesForAction[action][0];
+
+   if (!expectedStatus) {
+      throw new Error(`Action ${action} must define an expected status for test coverage`);
+   }
+
+   return expectedStatus;
+}
+
+async function invokeAction(action: Exclude<DownloadAction, DownloadAction.Listen>, path: string): Promise<DownloadActionResponse> {
+   const args = action === DownloadAction.Create ?
+      { path, url: 'https://example.com/recreated.zip' } :
+      { path };
+
+   return invoke<DownloadActionResponse>(`plugin:download|${action}`, args);
+}
 
 describe('mockDownloadPlugin', () => {
    it('seeds downloads for list and records invocations', async () => {
@@ -168,5 +218,40 @@ describe('mockDownloadPlugin', () => {
 
       expect(response.isExpectedStatus).toBe(true);
       expect(response.download.status).toBe(DownloadStatus.InProgress);
+   });
+
+   it.each(ACTION_STATUS_CASES)('keeps mocked action responses aligned with action tables for %s from %s', async (action, status) => {
+      const path = `/tmp/${action}-${status}.zip`;
+
+      const controller = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(status, { path }),
+         ],
+      });
+
+      const expectedStatus = getExpectedStatus(action);
+
+      const isAllowed = allowedActions[status].includes(action);
+
+      const expectedResultStatus = isAllowed ? expectedStatus : status;
+
+      const expectedFlag = expectedResultStatus === expectedStatus;
+
+      const download = await get(path);
+
+      expect(hasAction(download, action)).toBe(isAllowed);
+
+      const response = await invokeAction(action, path);
+
+      expect(response.expectedStatus).toBe(expectedStatus);
+      expect(response.isExpectedStatus).toBe(expectedFlag);
+      expect(response.download.status).toBe(expectedResultStatus);
+      expect(response.download.path).toBe(path);
+      expect(controller.getDownload(path).status).toBe(expectedResultStatus);
+
+      if (action === DownloadAction.Create && status === DownloadStatus.Pending) {
+         expect(response.download.url).toBe('https://example.com/recreated.zip');
+         expect(controller.getDownload(path).url).toBe('https://example.com/recreated.zip');
+      }
    });
 });

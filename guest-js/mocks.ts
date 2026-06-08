@@ -131,7 +131,13 @@ function normalizeError(error: Error | string): Error {
 }
 
 function getExpectedStatus<A extends DownloadAction>(action: A): MockActionResponse<A>['expectedStatus'] {
-   return expectedStatusesForAction[action][0] as MockActionResponse<A>['expectedStatus'];
+   const expectedStatus = expectedStatusesForAction[action][0];
+
+   if (!expectedStatus) {
+      throw new Error(`Mocked download action ${action} must define at least one expected status`);
+   }
+
+   return expectedStatus as MockActionResponse<A>['expectedStatus'];
 }
 
 function createActionResponse<A extends DownloadAction>(
@@ -143,6 +149,19 @@ function createActionResponse<A extends DownloadAction>(
       download: cloneDownload(download),
       expectedStatus: getExpectedStatus(action),
       isExpectedStatus,
+   };
+}
+
+function createNoOpActionResponse<A extends DownloadAction>(
+   action: A,
+   download: DownloadState<DownloadStatus>
+): MockActionResponse<A> {
+   const expectedStatus = getExpectedStatus(action);
+
+   return {
+      download: cloneDownload(download),
+      expectedStatus,
+      isExpectedStatus: download.status === expectedStatus,
    };
 }
 
@@ -212,6 +231,8 @@ export function clearDownloadMocks(): void {
  *
  * This helper approximates backend/native state transitions for common test flows.
  * It is not a backend contract and does not transition downloads to `Completed`.
+ * It only simulates the desktop event path and always returns `false` for `is_native`,
+ * so tests that need the native/mobile listener branch require a separate approach.
  * Use `emitChange()` or `setDownload()` to simulate progress updates or terminal states.
  *
  * @param options Initial mocked download state.
@@ -240,7 +261,7 @@ export function mockDownloadPlugin(
       switch (action) {
          case DownloadAction.Create: {
             if (currentDownload.status !== DownloadStatus.Pending) {
-               return createActionResponse(action, currentDownload, false);
+               return createNoOpActionResponse(action, currentDownload);
             }
 
             const createdDownload = {
@@ -255,7 +276,7 @@ export function mockDownloadPlugin(
          }
          case DownloadAction.Start: {
             if (currentDownload.status !== DownloadStatus.Idle) {
-               return createActionResponse(action, currentDownload, false);
+               return createNoOpActionResponse(action, currentDownload);
             }
 
             const nextDownload = createTransitionDownload(currentDownload, DownloadStatus.InProgress);
@@ -266,7 +287,7 @@ export function mockDownloadPlugin(
          }
          case DownloadAction.Resume: {
             if (currentDownload.status !== DownloadStatus.Paused) {
-               return createActionResponse(action, currentDownload, false);
+               return createNoOpActionResponse(action, currentDownload);
             }
 
             const nextDownload = createTransitionDownload(currentDownload, DownloadStatus.InProgress);
@@ -277,7 +298,7 @@ export function mockDownloadPlugin(
          }
          case DownloadAction.Pause: {
             if (currentDownload.status !== DownloadStatus.InProgress) {
-               return createActionResponse(action, currentDownload, false);
+               return createNoOpActionResponse(action, currentDownload);
             }
 
             const nextDownload = createTransitionDownload(currentDownload, DownloadStatus.Paused);
@@ -292,7 +313,7 @@ export function mockDownloadPlugin(
                || currentDownload.status === DownloadStatus.Paused;
 
             if (!canCancel) {
-               return createActionResponse(action, currentDownload, false);
+               return createNoOpActionResponse(action, currentDownload);
             }
 
             const nextDownload = createTransitionDownload(currentDownload, DownloadStatus.Canceled);
@@ -369,6 +390,12 @@ export function mockDownloadPlugin(
          return downloadsByPath.delete(path);
       },
 
+      /**
+       * Emits a mocked desktop download change event.
+       *
+       * When simulating a `Completed` download, callers must provide `progress: 100`
+       * themselves because the mock does not normalize progress for terminal states.
+       */
       async emitChange(download: DownloadState<DownloadStatus>): Promise<void> {
          setDownloadForPath(downloadsByPath, download);
          await emit(DOWNLOAD_EVENT_NAME, cloneDownload(download));
