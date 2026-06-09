@@ -1,0 +1,257 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { invoke } from '@tauri-apps/api/core';
+import { get, list } from './index';
+import { clearDownloadMocks, createMockDownloadState, mockDownloadPlugin } from './mocks';
+import {
+   allowedActions,
+   DownloadAction,
+   type DownloadActionResponse,
+   DownloadStatus,
+   expectedStatusesForAction,
+   hasAction,
+} from './types';
+
+afterEach(() => {
+   clearDownloadMocks();
+});
+
+const ACTIONS = [
+   DownloadAction.Create,
+   DownloadAction.Start,
+   DownloadAction.Resume,
+   DownloadAction.Pause,
+   DownloadAction.Cancel,
+] as const;
+
+const STATUSES = [
+   DownloadStatus.Pending,
+   DownloadStatus.Idle,
+   DownloadStatus.InProgress,
+   DownloadStatus.Paused,
+   DownloadStatus.Canceled,
+   DownloadStatus.Completed,
+   DownloadStatus.Unknown,
+] as const;
+
+const ACTION_STATUS_CASES = ACTIONS.flatMap((action) => {
+   return STATUSES.map((status) => {
+      return [ action, status ] as const;
+   });
+});
+
+function getExpectedStatus(action: Exclude<DownloadAction, DownloadAction.Listen>): DownloadStatus {
+   const expectedStatus = expectedStatusesForAction[action][0];
+
+   if (!expectedStatus) {
+      throw new Error(`Action ${action} must define an expected status for test coverage`);
+   }
+
+   return expectedStatus;
+}
+
+async function invokeAction(action: Exclude<DownloadAction, DownloadAction.Listen>, path: string): Promise<DownloadActionResponse> {
+   const args = action === DownloadAction.Create ?
+      { path, url: 'https://example.com/recreated.zip' } :
+      { path };
+
+   return invoke<DownloadActionResponse>(`plugin:download|${action}`, args);
+}
+
+describe('mockDownloadPlugin', () => {
+   it('seeds downloads for list and records invocations', async () => {
+      const controller = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(DownloadStatus.Idle, {
+               path: '/tmp/seeded.zip',
+               progress: 12,
+            }),
+         ],
+      });
+
+      const downloads = await list();
+
+      expect(downloads).toHaveLength(1);
+      expect(downloads[0].path).toBe('/tmp/seeded.zip');
+      expect(downloads[0].status).toBe(DownloadStatus.Idle);
+      expect(hasAction(downloads[0], DownloadAction.Start)).toBe(true);
+      expect(controller.getLastInvocation()).toEqual({
+         cmd: 'plugin:download|list',
+         args: {},
+      });
+   });
+
+   it('transitions Pending to Idle on create and updates stored state', async () => {
+      const controller = mockDownloadPlugin();
+
+      const download = await get('/tmp/new.zip');
+
+      expect(download.status).toBe(DownloadStatus.Pending);
+      expect(hasAction(download, DownloadAction.Create)).toBe(true);
+      if (!hasAction(download, DownloadAction.Create)) {
+         throw new Error('expected create action');
+      }
+
+      const response = await download.create('https://example.com/new.zip');
+
+      expect(response.isExpectedStatus).toBe(true);
+      expect(response.download.status).toBe(DownloadStatus.Idle);
+      expect(controller.getDownload('/tmp/new.zip')).toEqual({
+         url: 'https://example.com/new.zip',
+         path: '/tmp/new.zip',
+         progress: 0,
+         status: DownloadStatus.Idle,
+      });
+   });
+
+   it('emits mocked desktop events to download listeners', async () => {
+      const controller = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(DownloadStatus.Idle, {
+               path: '/tmp/listener.zip',
+            }),
+         ],
+      });
+
+      const download = await get('/tmp/listener.zip');
+
+      const listener = vi.fn();
+
+      if (!hasAction(download, DownloadAction.Listen)) {
+         throw new Error('expected listen action');
+      }
+
+      const unlisten = await download.listen(listener);
+
+      await controller.emitChange(createMockDownloadState(DownloadStatus.InProgress, {
+         path: '/tmp/listener.zip',
+         progress: 42,
+      }));
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+         path: '/tmp/listener.zip',
+         progress: 42,
+         status: DownloadStatus.InProgress,
+      }));
+      expect(hasAction(listener.mock.calls[0][0], DownloadAction.Pause)).toBe(true);
+
+      unlisten();
+   });
+
+   it('resets listener state when clearing download mocks', async () => {
+      const firstController = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(DownloadStatus.Idle, {
+               path: '/tmp/first-listener.zip',
+            }),
+         ],
+      });
+
+      const firstDownload = await get('/tmp/first-listener.zip');
+
+      const firstListener = vi.fn();
+
+      if (!hasAction(firstDownload, DownloadAction.Listen)) {
+         throw new Error('expected listen action');
+      }
+
+      await firstDownload.listen(firstListener);
+
+      await firstController.emitChange(createMockDownloadState(DownloadStatus.InProgress, {
+         path: '/tmp/first-listener.zip',
+         progress: 10,
+      }));
+
+      expect(firstListener).toHaveBeenCalledTimes(1);
+
+      clearDownloadMocks();
+
+      const secondController = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(DownloadStatus.Idle, {
+               path: '/tmp/second-listener.zip',
+            }),
+         ],
+      });
+
+      const secondDownload = await get('/tmp/second-listener.zip');
+
+      const secondListener = vi.fn();
+
+      if (!hasAction(secondDownload, DownloadAction.Listen)) {
+         throw new Error('expected listen action');
+      }
+
+      const unlisten = await secondDownload.listen(secondListener);
+
+      await secondController.emitChange(createMockDownloadState(DownloadStatus.InProgress, {
+         path: '/tmp/second-listener.zip',
+         progress: 20,
+      }));
+
+      expect(secondListener).toHaveBeenCalledTimes(1);
+      unlisten();
+   });
+
+   it('allows command errors to be injected per action', async () => {
+      const controller = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(DownloadStatus.Idle, {
+               path: '/tmp/error.zip',
+            }),
+         ],
+      });
+
+      const download = await get('/tmp/error.zip');
+
+      controller.setCommandError('start', 'start failed');
+
+      if (!hasAction(download, DownloadAction.Start)) {
+         throw new Error('expected start action');
+      }
+
+      await expect(download.start()).rejects.toThrow('start failed');
+
+      controller.clearCommandError('start');
+
+      const response = await download.start();
+
+      expect(response.isExpectedStatus).toBe(true);
+      expect(response.download.status).toBe(DownloadStatus.InProgress);
+   });
+
+   it.each(ACTION_STATUS_CASES)('keeps mocked action responses aligned with action tables for %s from %s', async (action, status) => {
+      const path = `/tmp/${action}-${status}.zip`;
+
+      const controller = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(status, { path }),
+         ],
+      });
+
+      const expectedStatus = getExpectedStatus(action);
+
+      const isAllowed = allowedActions[status].includes(action);
+
+      const expectedResultStatus = isAllowed ? expectedStatus : status;
+
+      const expectedFlag = expectedResultStatus === expectedStatus;
+
+      const download = await get(path);
+
+      expect(hasAction(download, action)).toBe(isAllowed);
+
+      const response = await invokeAction(action, path);
+
+      expect(response.expectedStatus).toBe(expectedStatus);
+      expect(response.isExpectedStatus).toBe(expectedFlag);
+      expect(response.download.status).toBe(expectedResultStatus);
+      expect(response.download.path).toBe(path);
+      expect(controller.getDownload(path).status).toBe(expectedResultStatus);
+
+      if (action === DownloadAction.Create && status === DownloadStatus.Pending) {
+         expect(response.download.url).toBe('https://example.com/recreated.zip');
+         expect(controller.getDownload(path).url).toBe('https://example.com/recreated.zip');
+      }
+   });
+});

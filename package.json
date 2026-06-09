@@ -7,9 +7,16 @@
    "main": "./dist-js/index.cjs",
    "module": "./dist-js/index.js",
    "exports": {
-      "types": "./dist-js/index.d.ts",
-      "import": "./dist-js/index.js",
-      "require": "./dist-js/index.cjs"
+      ".": {
+         "types": "./dist-js/index.d.ts",
+         "import": "./dist-js/index.js",
+         "require": "./dist-js/index.cjs"
+      },
+      "./mocks": {
+         "types": "./dist-js/mocks.d.ts",
+         "import": "./dist-js/mocks.js",
+         "require": "./dist-js/mocks.cjs"
+      }
    },
    "files": [
       "dist-js",
