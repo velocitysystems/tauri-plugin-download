@@ -30,6 +30,8 @@ let lastCmd = '',
 const IDLE_STATE = {
    url: 'https://example.com/file.zip',
    path: '/tmp/file.zip',
+   receivedBytes: 0,
+   totalBytes: null,
    progress: 0,
    status: DownloadStatus.Idle,
 };
@@ -37,6 +39,8 @@ const IDLE_STATE = {
 const IN_PROGRESS_STATE = {
    url: 'https://example.com/file.zip',
    path: '/tmp/file.zip',
+   receivedBytes: 42,
+   totalBytes: 100,
    progress: 42,
    status: DownloadStatus.InProgress,
 };
@@ -44,6 +48,8 @@ const IN_PROGRESS_STATE = {
 const PAUSED_STATE = {
    url: 'https://example.com/file.zip',
    path: '/tmp/file.zip',
+   receivedBytes: 42,
+   totalBytes: 100,
    progress: 42,
    status: DownloadStatus.Paused,
 };
@@ -71,6 +77,8 @@ beforeEach(() => {
          return {
             url: '',
             path,
+            receivedBytes: 0,
+            totalBytes: null,
             progress: 0,
             status: DownloadStatus.Pending,
          };
@@ -243,6 +251,8 @@ describe('state machine — action availability', () => {
       const download = attachDownload({
          url: '',
          path: '/tmp/file.zip',
+         receivedBytes: 0,
+         totalBytes: null,
          progress: 0,
          status: DownloadStatus.Pending,
       });
@@ -330,6 +340,8 @@ describe('state machine — action availability', () => {
 
       expect(download.url).toBe('https://example.com/file.zip');
       expect(download.path).toBe('/tmp/file.zip');
+      expect(download.receivedBytes).toBe(42);
+      expect(download.totalBytes).toBe(100);
       expect(download.progress).toBe(42);
       expect(download.status).toBe(DownloadStatus.InProgress);
    });

@@ -58,6 +58,28 @@ async function invokeAction(action: Exclude<DownloadAction, DownloadAction.Liste
 }
 
 describe('mockDownloadPlugin', () => {
+   it('normalizes completed progress while preserving byte counts', () => {
+      const state = createMockDownloadState(DownloadStatus.Completed, {
+         receivedBytes: 30,
+         totalBytes: 100,
+      });
+
+      expect(state).toEqual(expect.objectContaining({
+         receivedBytes: 30,
+         totalBytes: 100,
+         progress: 100,
+      }));
+   });
+
+   it('clamps derived progress to 100 percent', () => {
+      const { progress } = createMockDownloadState(DownloadStatus.InProgress, {
+         receivedBytes: 150,
+         totalBytes: 100,
+      });
+
+      expect(progress).toBe(100);
+   });
+
    it('seeds downloads for list and records invocations', async () => {
       const controller = mockDownloadPlugin({
          downloads: [
@@ -98,6 +120,8 @@ describe('mockDownloadPlugin', () => {
       expect(controller.getDownload('/tmp/new.zip')).toEqual({
          url: 'https://example.com/new.zip',
          path: '/tmp/new.zip',
+         receivedBytes: 0,
+         totalBytes: null,
          progress: 0,
          status: DownloadStatus.Idle,
       });
@@ -124,13 +148,15 @@ describe('mockDownloadPlugin', () => {
 
       await controller.emitChange(createMockDownloadState(DownloadStatus.InProgress, {
          path: '/tmp/listener.zip',
-         progress: 42,
+         receivedBytes: 42,
+         totalBytes: 100,
       }));
 
       expect(listener).toHaveBeenCalledTimes(1);
       expect(listener).toHaveBeenCalledWith(expect.objectContaining({
          path: '/tmp/listener.zip',
-         progress: 42,
+         receivedBytes: 42,
+         totalBytes: 100,
          status: DownloadStatus.InProgress,
       }));
       expect(hasAction(listener.mock.calls[0][0], DownloadAction.Pause)).toBe(true);
@@ -159,7 +185,8 @@ describe('mockDownloadPlugin', () => {
 
       await firstController.emitChange(createMockDownloadState(DownloadStatus.InProgress, {
          path: '/tmp/first-listener.zip',
-         progress: 10,
+         receivedBytes: 10,
+         totalBytes: 100,
       }));
 
       expect(firstListener).toHaveBeenCalledTimes(1);
@@ -186,7 +213,8 @@ describe('mockDownloadPlugin', () => {
 
       await secondController.emitChange(createMockDownloadState(DownloadStatus.InProgress, {
          path: '/tmp/second-listener.zip',
-         progress: 20,
+         receivedBytes: 20,
+         totalBytes: 100,
       }));
 
       expect(secondListener).toHaveBeenCalledTimes(1);

@@ -121,6 +121,8 @@ function createPendingDownload(path: string): DownloadState<DownloadStatus.Pendi
    return {
       url: '',
       path,
+      receivedBytes: 0,
+      totalBytes: null,
       progress: 0,
       status: DownloadStatus.Pending,
    };
@@ -202,6 +204,10 @@ function createTransitionDownload(
 /**
  * Creates a mock download state object for tests.
  *
+ * Unless `progress` is explicitly overridden, progress is derived from
+ * `receivedBytes` and `totalBytes`. Unknown-size downloads use
+ * `totalBytes: null`, and completed downloads default to `progress: 100`.
+ *
  * @param status - The download status to assign to the mock state.
  * @param overrides - Optional properties to override on the generated state.
  * @returns A mock download state with defaults for unspecified fields.
@@ -210,10 +216,26 @@ export function createMockDownloadState(
    status: DownloadStatus,
    overrides: Partial<DownloadState<DownloadStatus>> = {}
 ): DownloadState<DownloadStatus> {
+   const receivedBytes = overrides.receivedBytes ?? 0;
+
+   const totalBytes = overrides.totalBytes ?? null;
+
+   let computedProgress = 0;
+
+   if (overrides.progress !== undefined) {
+      computedProgress = overrides.progress;
+   } else if (status === DownloadStatus.Completed) {
+      computedProgress = 100;
+   } else if (totalBytes !== null && totalBytes > 0) {
+      computedProgress = Math.min((receivedBytes / totalBytes) * 100, 100);
+   }
+
    return {
       url: overrides.url ?? DEFAULT_URL,
       path: overrides.path ?? '/tmp/file.zip',
-      progress: overrides.progress ?? 0,
+      receivedBytes,
+      totalBytes,
+      progress: computedProgress,
       status,
    };
 }
@@ -392,9 +414,6 @@ export function mockDownloadPlugin(
 
       /**
        * Emits a mocked desktop download change event.
-       *
-       * When simulating a `Completed` download, callers must provide `progress: 100`
-       * themselves because the mock does not normalize progress for terminal states.
        */
       async emitChange(download: DownloadState<DownloadStatus>): Promise<void> {
          setDownloadForPath(downloadsByPath, download);

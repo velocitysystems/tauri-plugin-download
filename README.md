@@ -5,7 +5,7 @@
 State-driven, resumable download API for Tauri 2.x apps.
 
 This plugin provides a cross-platform download interface with resumable downloads,
-progress tracking, and proper resource management.
+byte-count progress tracking, and proper resource management.
 
 [ci-badge]: https://github.com/silvermine/tauri-plugin-download/actions/workflows/ci.yml/badge.svg
 [ci-url]: https://github.com/silvermine/tauri-plugin-download/actions/workflows/ci.yml
@@ -14,7 +14,7 @@ progress tracking, and proper resource management.
 
    * Parallel, resumable download support
    * Persistable, thread-safe store
-   * State and progress notifications
+   * State, byte count, and progress notifications
    * Cross-platform support (Linux, Windows, macOS, Android, iOS)
 
 | Platform  | Supported |
@@ -126,7 +126,11 @@ async function listDownloads() {
    const downloads = await list();
 
    for (const download of downloads) {
-      console.debug(`Found '${download.path}': [${download.status}, ${download.progress}%]`);
+      const totalBytes = download.totalBytes ?? 'unknown';
+
+      console.debug(
+         `Found '${download.path}': [${download.status}, ${download.receivedBytes}/${totalBytes} bytes, ${download.progress}%]`
+      );
    }
 }
 ```
@@ -142,7 +146,11 @@ async function getDownload() {
    if (download.status === DownloadStatus.Pending) {
       console.debug(`Download '${download.path}' not found in store`);
    } else {
-      console.debug(`Found '${download.path}': [${download.status}, ${download.progress}%]`);
+      const totalBytes = download.totalBytes ?? 'unknown';
+
+      console.debug(
+         `Found '${download.path}': [${download.status}, ${download.receivedBytes}/${totalBytes} bytes, ${download.progress}%]`
+      );
    }
 }
 ```
@@ -182,6 +190,9 @@ async function manageDownload() {
 
 Listeners can be attached to downloads in any status, including `Pending`.
 This allows you to set up listeners before creating the download.
+Each download state includes `receivedBytes`, `totalBytes`, and `progress`.
+When the server does not provide a content length, `totalBytes` is `null`;
+`progress` remains `0` until the terminal `Completed` event, where it is `100`.
 
 ```ts
 import { get, DownloadStatus } from 'tauri-plugin-download';
@@ -191,7 +202,9 @@ async function setupAndStartDownload() {
 
    // Attach listener (works for Pending downloads too)
    const unlisten = await download.listen((updated) => {
-      console.debug(`'${updated.path}': ${updated.progress}%`);
+      console.debug(
+         `'${updated.path}': ${updated.receivedBytes}/${updated.totalBytes ?? 'unknown'} bytes (${updated.progress}%)`
+      );
    });
 
    // Create and start if pending
@@ -236,9 +249,12 @@ It is not a backend contract and does not transition downloads to `Completed`.
 Use `emitChange()` to simulate progress updates or terminal-state events, or
 `setDownload()` to seed a specific state without emitting an event.
 It only simulates the desktop event path and returns `false` for `is_native`,
-so tests for the native/mobile listener branch need a separate approach. When
-emitting a `Completed` state, include `progress: 100` yourself because the mock
-does not normalize terminal-state progress.
+so tests for the native/mobile listener branch need a separate approach.
+
+`createMockDownloadState()` computes `progress` from `receivedBytes` and
+`totalBytes` when `progress` is not explicitly provided. For unknown-size
+downloads, use `totalBytes: null`. A generated `Completed` state reports
+`progress: 100`.
 
 ```ts
 import { afterEach, expect, it } from 'vitest';
