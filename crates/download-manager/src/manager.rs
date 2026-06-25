@@ -1,3 +1,5 @@
+use reqwest_middleware::ClientBuilder;
+use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,6 +11,8 @@ use crate::models::*;
 use crate::store::DownloadStore;
 use crate::validate;
 
+type HttpClient = reqwest_middleware::ClientWithMiddleware;
+
 pub(crate) static DOWNLOAD_SUFFIX: &str = ".download";
 
 /// Callback invoked whenever a download item changes state.
@@ -17,6 +21,7 @@ pub type OnChanged = Arc<dyn Fn(DownloadItem) + Send + Sync + 'static>;
 /// Tauri-agnostic download manager, mirroring the iOS/Android `DownloadManager`.
 #[derive(Clone)]
 pub struct DownloadManager {
+   pub(crate) http_client: HttpClient,
    pub(crate) store: DownloadStore,
    pub(crate) on_changed: OnChanged,
 }
@@ -32,7 +37,16 @@ impl DownloadManager {
       if let Err(e) = store.load() {
          warn!("Failed to load download store: {}", e);
       }
-      Self { store, on_changed }
+      // Build client with retry middleware for transient failures.
+      let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+      let http_client = ClientBuilder::new(reqwest::Client::new())
+         .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+         .build();
+      Self {
+         http_client,
+         store,
+         on_changed,
+      }
    }
 
    ///

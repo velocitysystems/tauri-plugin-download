@@ -1,7 +1,5 @@
 use futures::StreamExt;
 use reqwest::header::{HeaderMap, RANGE};
-use reqwest_middleware::ClientBuilder;
-use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -19,12 +17,6 @@ use crate::models::*;
 /// - Progress tracking and throttling
 /// - State updates and event emission
 pub(crate) async fn download(manager: &DownloadManager, item: DownloadItem) -> crate::Result<()> {
-   // Build client with retry middleware for transient failures.
-   let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-   let client = ClientBuilder::new(reqwest::Client::new())
-      .with(RetryTransientMiddleware::new_with_policy(retry_policy))
-      .build();
-
    // Check the size of the already downloaded part, if any.
    let temp_path = format!("{}{}", item.path, DOWNLOAD_SUFFIX);
    let mut downloaded_size = if Path::new(&temp_path).exists() {
@@ -47,7 +39,13 @@ pub(crate) async fn download(manager: &DownloadManager, item: DownloadItem) -> c
    }
 
    // Send the request.
-   let response = match client.get(&item.url).headers(headers).send().await {
+   let response = match manager
+      .http_client
+      .get(&item.url)
+      .headers(headers)
+      .send()
+      .await
+   {
       Ok(res) => res,
       Err(e) => {
          return Err(Error::Http(format!("Failed to send request: {}", e)));
@@ -82,10 +80,7 @@ pub(crate) async fn download(manager: &DownloadManager, item: DownloadItem) -> c
 
    // Get the total size of the file from headers (if available).
    let total_size = response
-      .headers()
-      .get("content-length")
-      .and_then(|len| len.to_str().ok())
-      .and_then(|len| len.parse::<u64>().ok())
+      .content_length()
       .map(|len| len + downloaded_size)
       .unwrap_or(0);
 
