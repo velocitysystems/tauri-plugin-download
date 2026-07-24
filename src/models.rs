@@ -25,6 +25,11 @@ mod mobile_types {
    pub struct DownloadItem {
       pub url: String,
       pub path: String,
+      #[serde(default)]
+      pub received_bytes: u64,
+      #[serde(default)]
+      pub total_bytes: Option<u64>,
+      #[serde(default)]
       pub progress: f64,
       pub status: DownloadStatus,
    }

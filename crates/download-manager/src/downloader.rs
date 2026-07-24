@@ -16,7 +16,7 @@ use crate::models::*;
 /// - Streaming response chunks to disk
 /// - Progress tracking and throttling
 /// - State updates and event emission
-pub(crate) async fn download(manager: &DownloadManager, item: DownloadItem) -> crate::Result<()> {
+pub(crate) async fn download(manager: &DownloadManager, item: DownloadRecord) -> crate::Result<()> {
    // Check the size of the already downloaded part, if any.
    let temp_path = format!("{}{}", item.path, DOWNLOAD_SUFFIX);
    let mut downloaded_size = if Path::new(&temp_path).exists() {
@@ -79,10 +79,20 @@ pub(crate) async fn download(manager: &DownloadManager, item: DownloadItem) -> c
    }
 
    // Get the total size of the file from headers (if available).
-   let total_size = response
-      .content_length()
-      .map(|len| len + downloaded_size)
-      .unwrap_or(0);
+   let total_size = response.content_length().map(|len| len + downloaded_size);
+
+   // Persist a known total immediately. Progress updates deliberately avoid disk
+   // writes, but the total must survive an abrupt process exit so init() can
+   // combine it with the recovered temp-file length.
+   if let Some(total) = total_size
+      && let Some(current_item) = manager.store.find_by_path(&item.path)?
+      && current_item.status == DownloadStatus::InProgress
+      && current_item.total_bytes != Some(total)
+   {
+      manager
+         .store
+         .update(current_item.with_bytes(downloaded_size, Some(total)))?;
+   }
 
    // Ensure the output folder exists.
    let folder = Path::new(&temp_path)
@@ -101,16 +111,8 @@ pub(crate) async fn download(manager: &DownloadManager, item: DownloadItem) -> c
       .map_err(|e| Error::File(format!("Failed to open file: {}", e)))?;
 
    // Write the response body to the file in chunks.
-   let mut downloaded = downloaded_size;
    let mut stream = response.bytes_stream();
-
-   // Throttle progress updates:
-   // - Known size: emit when progress increases by at least 1%.
-   // - Unknown size: emit every BYTES_THRESHOLD bytes.
-   let mut last_emitted_progress = 0.0;
-   let mut last_emitted_bytes = downloaded_size;
-   const PROGRESS_THRESHOLD: f64 = 1.0;
-   const BYTES_THRESHOLD: u64 = 1024 * 1024;
+   let mut progress = ProgressTracker::new(downloaded_size, total_size);
 
    while let Some(chunk) = stream.next().await {
       match chunk {
@@ -119,24 +121,13 @@ pub(crate) async fn download(manager: &DownloadManager, item: DownloadItem) -> c
                .write_all(&data)
                .map_err(|e| Error::File(format!("Failed to write file: {}", e)))?;
 
-            downloaded += data.len() as u64;
-            let progress = if total_size > 0 {
-               (downloaded as f64 / total_size as f64) * 100.0
-            } else {
-               0.0
-            };
+            progress.advance(data.len() as u64);
 
-            let should_throttle = if total_size > 0 {
-               progress < 100.0 && progress - last_emitted_progress <= PROGRESS_THRESHOLD
-            } else {
-               downloaded - last_emitted_bytes < BYTES_THRESHOLD
-            };
-            if should_throttle {
+            if !progress.should_emit() {
                continue;
             }
 
-            last_emitted_progress = progress;
-            last_emitted_bytes = downloaded;
+            progress.mark_emitted();
             let Ok(Some(current_item)) = manager.store.find_by_path(&item.path) else {
                // Download item was not found i.e. removed.
                return Ok(());
@@ -144,12 +135,14 @@ pub(crate) async fn download(manager: &DownloadManager, item: DownloadItem) -> c
             match current_item.status {
                // Download is in progress.
                DownloadStatus::InProgress => {
-                  if progress < 100.0 {
+                  if !progress.is_complete() {
                      // Download is not yet complete.
                      // Update item in store and emit change event.
-                     let updated = current_item.with_progress(progress);
+                     let updated = current_item
+                        .with_bytes(progress.received_bytes, total_size)
+                        .with_status(DownloadStatus::InProgress);
                      manager.store.update_no_persist(updated.clone())?;
-                     manager.emit_changed(updated);
+                     manager.emit_changed(&updated);
                   }
                   // Completion is handled after the loop exits naturally.
                }
@@ -188,10 +181,71 @@ pub(crate) async fn download(manager: &DownloadManager, item: DownloadItem) -> c
 
       // File is safely in place; now drop the store entry and signal completion.
       manager.store.delete(&item.path)?;
-      manager.emit_changed(current_item.with_status(DownloadStatus::Completed));
+      let completed = current_item
+         .with_bytes(progress.received_bytes, total_size)
+         .with_status(DownloadStatus::Completed);
+      manager.emit_changed(&completed);
    }
 
    Ok(())
+}
+
+/// Tracks download progress and controls when emissions are sent.
+///
+/// - Known size (`total_bytes` is `Some`): emits when the integer percent (0–100) changes.
+/// - Unknown size (`None`): emits every `BYTES_THRESHOLD` bytes.
+///
+/// Tracks `received_bytes` internally so the download loop only needs to call
+/// `advance()` with each chunk size and check `should_emit()`.
+struct ProgressTracker {
+   received_bytes: u64,
+   total_bytes: Option<u64>,
+   last_emitted_percent: u64,
+   last_emitted_bytes: u64,
+}
+
+impl ProgressTracker {
+   const BYTES_THRESHOLD: u64 = 1024 * 1024;
+
+   fn new(received_bytes: u64, total_bytes: Option<u64>) -> Self {
+      let last_emitted_percent = match total_bytes {
+         Some(total) if total > 0 => received_bytes * 100 / total,
+         _ => 0,
+      };
+      Self {
+         received_bytes,
+         total_bytes,
+         last_emitted_percent,
+         last_emitted_bytes: received_bytes,
+      }
+   }
+
+   fn advance(&mut self, bytes_written: u64) {
+      self.received_bytes += bytes_written;
+   }
+
+   fn should_emit(&self) -> bool {
+      match self.total_bytes {
+         Some(total) if total > 0 => {
+            let percent = self.received_bytes * 100 / total;
+            percent >= 100 || percent > self.last_emitted_percent
+         }
+         _ => self.received_bytes - self.last_emitted_bytes >= Self::BYTES_THRESHOLD,
+      }
+   }
+
+   fn is_complete(&self) -> bool {
+      matches!(self.total_bytes, Some(total) if self.received_bytes >= total)
+   }
+
+   fn mark_emitted(&mut self) {
+      if let Some(total) = self.total_bytes
+         && total > 0
+      {
+         self.last_emitted_percent = self.received_bytes * 100 / total;
+      }
+      self.last_emitted_bytes = self.received_bytes;
+   }
 }
 
 #[cfg(test)]
@@ -216,8 +270,8 @@ mod tests {
       let dir = TempDir::new().unwrap();
       let events: EventLog = Arc::new(Mutex::new(Vec::new()));
       let captured = events.clone();
-      let on_changed: OnChanged = Arc::new(move |item| {
-         captured.lock().unwrap().push(item);
+      let on_changed: OnChanged = Arc::new(move |event| {
+         captured.lock().unwrap().push(event);
       });
       let manager = DownloadManager::new(dir.path().to_path_buf(), on_changed);
       TestFixture {
@@ -227,13 +281,14 @@ mod tests {
       }
    }
 
-   /// Seeds an `InProgress` item in the store and returns a `DownloadItem`
+   /// Seeds an `InProgress` record in the store and returns a `DownloadRecord`
    /// suitable for passing to `download()`.
-   fn seed_in_progress(manager: &DownloadManager, dest_path: &str, url: &str) -> DownloadItem {
-      let item = DownloadItem {
+   fn seed_in_progress(manager: &DownloadManager, dest_path: &str, url: &str) -> DownloadRecord {
+      let item = DownloadRecord {
          url: url.to_string(),
          path: dest_path.to_string(),
-         progress: 0.0,
+         received_bytes: 0,
+         total_bytes: None,
          status: DownloadStatus::InProgress,
       };
       manager.store.create(item.clone()).unwrap();
@@ -288,11 +343,22 @@ mod tests {
          events_with_status(&fixture.events, DownloadStatus::Completed),
          1
       );
+
+      let completed = fixture
+         .events
+         .lock()
+         .unwrap()
+         .iter()
+         .find(|e| e.status == DownloadStatus::Completed)
+         .cloned()
+         .unwrap();
+      assert_eq!(completed.received_bytes, body.len() as u64);
+      assert_eq!(completed.total_bytes, Some(body.len() as u64));
    }
 
    #[tokio::test]
    async fn test_completes_without_content_length() {
-      // Regression: when the server omits Content-Length, total_size is 0
+      // Regression: when the server omits Content-Length, total_size is None
       // and progress stays at 0.0. Completion must still trigger when the
       // stream ends naturally.
       let fixture = make_fixture();
@@ -321,6 +387,17 @@ mod tests {
          events_with_status(&fixture.events, DownloadStatus::Completed),
          1
       );
+
+      let completed = fixture
+         .events
+         .lock()
+         .unwrap()
+         .iter()
+         .find(|e| e.status == DownloadStatus::Completed)
+         .cloned()
+         .unwrap();
+      assert_eq!(completed.received_bytes, body.len() as u64);
+      assert_eq!(completed.total_bytes, None);
    }
 
    #[tokio::test]
@@ -353,6 +430,17 @@ mod tests {
 
       let combined = [first_half.as_slice(), second_half.as_slice()].concat();
       assert_eq!(fs::read(&dest).unwrap(), combined);
+
+      let completed = fixture
+         .events
+         .lock()
+         .unwrap()
+         .iter()
+         .find(|e| e.status == DownloadStatus::Completed)
+         .cloned()
+         .unwrap();
+      assert_eq!(completed.received_bytes, combined.len() as u64);
+      assert_eq!(completed.total_bytes, Some(combined.len() as u64));
    }
 
    #[tokio::test]
@@ -383,6 +471,17 @@ mod tests {
       assert_eq!(fs::read(&dest).unwrap(), full_body);
       // Temp file has been cleaned up.
       assert!(!Path::new(&temp_path).exists());
+
+      let completed = fixture
+         .events
+         .lock()
+         .unwrap()
+         .iter()
+         .find(|e| e.status == DownloadStatus::Completed)
+         .cloned()
+         .unwrap();
+      assert_eq!(completed.received_bytes, full_body.len() as u64);
+      assert_eq!(completed.total_bytes, Some(full_body.len() as u64));
    }
 
    #[tokio::test]
@@ -462,13 +561,14 @@ mod tests {
 
       download(&fixture.manager, item).await.unwrap();
 
-      // At least one InProgress progress event with progress == 0.0 (unknown size),
-      // plus the final Completed event.
+      // At least one InProgress event with received_bytes > 0 but total_bytes == None
+      // (unknown size), plus the final Completed event.
       let log = fixture.events.lock().unwrap().clone();
       assert!(
-         log.iter()
-            .any(|e| e.status == DownloadStatus::InProgress && e.progress == 0.0),
-         "expected at least one InProgress(0.0) progress event for unknown size"
+         log.iter().any(|e| e.status == DownloadStatus::InProgress
+            && e.received_bytes > 0
+            && e.total_bytes.is_none()),
+         "expected at least one InProgress event with received_bytes > 0 for unknown size"
       );
       assert_eq!(
          events_with_status(&fixture.events, DownloadStatus::Completed),
@@ -481,7 +581,7 @@ mod tests {
       // Flipping the status to Paused while the body is still streaming must
       // stop reading, skip completion, and leave the .download temp file intact
       // so the download can later resume. The body exceeds BYTES_THRESHOLD so the
-      // in-loop throttle checkpoint — where the status is re-read from the store —
+      // in-loop progress checkpoint — where the status is re-read from the store —
       // is reached while data still remains, exercising the in-loop transition.
       let dir = TempDir::new().unwrap();
       let events: EventLog = Arc::new(Mutex::new(Vec::new()));
@@ -493,14 +593,17 @@ mod tests {
       let store_cell: Arc<Mutex<Option<DownloadStore>>> = Arc::new(Mutex::new(None));
       let captured = events.clone();
       let cell = store_cell.clone();
-      let on_changed: OnChanged = Arc::new(move |item: DownloadItem| {
-         captured.lock().unwrap().push(item.clone());
-         if item.status == DownloadStatus::InProgress
+      let on_changed: OnChanged = Arc::new(move |event: DownloadItem| {
+         captured.lock().unwrap().push(event.clone());
+         if event.status == DownloadStatus::InProgress
             && let Some(store) = cell.lock().unwrap().as_ref()
          {
-            store
-               .update_no_persist(item.with_status(DownloadStatus::Paused))
-               .unwrap();
+            // Re-read the record from the store to get a DownloadRecord for with_status
+            if let Ok(Some(item)) = store.find_by_path(&event.path) {
+               store
+                  .update_no_persist(item.with_status(DownloadStatus::Paused))
+                  .unwrap();
+            }
          }
       });
 
@@ -509,7 +612,7 @@ mod tests {
 
       let server = MockServer::start().await;
       // Several times BYTES_THRESHOLD with unknown size, so the body is delivered
-      // over multiple stream chunks and several throttle checkpoints are reached.
+      // over multiple stream chunks and several progress checkpoints are reached.
       let body = vec![0u8; 4 * 1024 * 1024];
       Mock::given(method("GET"))
          .and(wm_path("/pause"))
@@ -579,6 +682,16 @@ mod tests {
       // Store entry survives and is still InProgress, ready to be reverted/resumed.
       let stored = fixture.manager.store.find_by_path(&dest).unwrap().unwrap();
       assert_eq!(stored.status, DownloadStatus::InProgress);
+      assert_eq!(stored.total_bytes, Some(b"complete body".len() as u64));
+
+      // The total was written to disk when the response headers arrived, not only
+      // retained by the in-memory progress updates.
+      let reloaded = DownloadStore::new(fixture._dir.path().join("downloads.json"));
+      reloaded.load().unwrap();
+      assert_eq!(
+         reloaded.find_by_path(&dest).unwrap().unwrap().total_bytes,
+         Some(b"complete body".len() as u64)
+      );
       // Temp file is left intact rather than orphaned and forgotten.
       assert!(Path::new(&format!("{}{}", dest, DOWNLOAD_SUFFIX)).exists());
       // No completion event was emitted.

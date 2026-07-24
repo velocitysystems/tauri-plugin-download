@@ -83,7 +83,12 @@ impl DownloadManager {
    /// # Returns
    /// The list of download operations.
    pub fn list(&self) -> crate::Result<Vec<DownloadItem>> {
-      self.store.list()
+      Ok(self
+         .store
+         .list()?
+         .into_iter()
+         .map(|i| i.to_item())
+         .collect())
    }
 
    ///
@@ -102,13 +107,15 @@ impl DownloadManager {
       validate::path(path)?;
 
       match self.store.find_by_path(path)? {
-         Some(item) => Ok(item),
-         None => Ok(DownloadItem {
+         Some(item) => Ok(item.to_item()),
+         None => Ok(DownloadRecord {
             url: String::new(),
             path: path.to_string(),
-            progress: 0.0,
+            received_bytes: 0,
+            total_bytes: None,
             status: DownloadStatus::Pending,
-         }),
+         }
+         .to_item()),
       }
    }
 
@@ -128,20 +135,21 @@ impl DownloadManager {
       // Check if item already exists
       if let Some(existing) = self.store.find_by_path(path)? {
          return Ok(DownloadActionResponse::with_expected_status(
-            existing,
+            existing.to_item(),
             DownloadStatus::Idle,
          ));
       }
 
-      let item = self.store.create(DownloadItem {
+      let item = self.store.create(DownloadRecord {
          url: url.to_string(),
          path: path.to_string(),
-         progress: 0.0,
+         received_bytes: 0,
+         total_bytes: None,
          status: DownloadStatus::Idle,
       })?;
 
-      self.emit_changed(item.clone());
-      Ok(DownloadActionResponse::new(item))
+      let event = self.emit_changed(&item);
+      Ok(DownloadActionResponse::new(event))
    }
 
    ///
@@ -165,7 +173,7 @@ impl DownloadManager {
 
          // Return current state if in any other state.
          _ => Ok(DownloadActionResponse::with_expected_status(
-            item,
+            item.to_item(),
             DownloadStatus::InProgress,
          )),
       }
@@ -192,7 +200,7 @@ impl DownloadManager {
 
          // Return current state if in any other state.
          _ => Ok(DownloadActionResponse::with_expected_status(
-            item,
+            item.to_item(),
             DownloadStatus::InProgress,
          )),
       }
@@ -200,7 +208,7 @@ impl DownloadManager {
 
    fn spawn_download(
       &self,
-      item: DownloadItem,
+      item: DownloadRecord,
       err_msg: &'static str,
    ) -> crate::Result<DownloadActionResponse> {
       let item_in_progress = item.with_status(DownloadStatus::InProgress);
@@ -208,7 +216,8 @@ impl DownloadManager {
 
       let manager = self.clone();
       let path = item.path.clone();
-      let item_in_progress_response = item_in_progress.clone();
+      // Build the item without emitting — the download task will emit progress updates.
+      let public_item = item_in_progress.to_item();
       tokio::spawn(async move {
          if let Err(e) = downloader::download(&manager, item_in_progress).await {
             error!(file = %filename(&path), "Download {}: {}", err_msg, e);
@@ -227,7 +236,7 @@ impl DownloadManager {
          }
       });
 
-      Ok(DownloadActionResponse::new(item_in_progress_response))
+      Ok(DownloadActionResponse::new(public_item))
    }
 
    ///
@@ -250,13 +259,13 @@ impl DownloadManager {
          DownloadStatus::InProgress => {
             let paused = item.with_status(DownloadStatus::Paused);
             self.store.update(paused.clone())?;
-            self.emit_changed(paused.clone());
-            Ok(DownloadActionResponse::new(paused))
+            let event = self.emit_changed(&paused);
+            Ok(DownloadActionResponse::new(event))
          }
 
          // Return current state if in any other state.
          _ => Ok(DownloadActionResponse::with_expected_status(
-            item,
+            item.to_item(),
             DownloadStatus::Paused,
          )),
       }
@@ -286,42 +295,48 @@ impl DownloadManager {
                debug!(file = %filename(&item.path), "Temp file was not found or could not be deleted");
             }
 
-            self.emit_changed(item.with_status(DownloadStatus::Canceled));
-            Ok(DownloadActionResponse::new(
-               item.with_status(DownloadStatus::Canceled),
-            ))
+            let canceled = item.with_status(DownloadStatus::Canceled);
+            let event = self.emit_changed(&canceled);
+            Ok(DownloadActionResponse::new(event))
          }
 
          // Return current state if in any other state.
          _ => Ok(DownloadActionResponse::with_expected_status(
-            item,
+            item.to_item(),
             DownloadStatus::Canceled,
          )),
       }
    }
 
-   /// Reverts an `InProgress` download item to `Paused` or `Idle` based on
+   /// Reverts an `InProgress` download record to `Paused` or `Idle` based on
    /// whether a temp file exists on disk. No-op for other statuses.
-   fn revert_in_progress(&self, item: &DownloadItem) -> crate::Result<DownloadItem> {
+   fn revert_in_progress(&self, item: &DownloadRecord) -> crate::Result<DownloadRecord> {
       if item.status != DownloadStatus::InProgress {
          return Ok(item.clone());
       }
 
       let temp_path = format!("{}{}", item.path, DOWNLOAD_SUFFIX);
-      let reverted = if Path::new(&temp_path).exists() {
-         item.with_status(DownloadStatus::Paused)
+      let reverted = if let Ok(meta) = fs::metadata(&temp_path) {
+         // Metadata succeeded, so the temp file exists — recover byte count from it.
+         item
+            .with_bytes(meta.len(), item.total_bytes)
+            .with_status(DownloadStatus::Paused)
       } else {
-         item.with_status(DownloadStatus::Idle)
+         item
+            .with_bytes(0, item.total_bytes)
+            .with_status(DownloadStatus::Idle)
       };
 
       self.store.update(reverted.clone())?;
-      self.emit_changed(reverted.clone());
+      self.emit_changed(&reverted);
       Ok(reverted)
    }
 
-   pub(crate) fn emit_changed(&self, item: DownloadItem) {
-      debug!(file = %filename(&item.path), status = %item.status, progress = item.progress);
-      (self.on_changed)(item);
+   pub(crate) fn emit_changed(&self, item: &DownloadRecord) -> DownloadItem {
+      let public_item = item.to_item();
+      debug!(file = %filename(&item.path), status = %item.status, received_bytes = item.received_bytes, total_bytes = ?item.total_bytes);
+      (self.on_changed)(public_item.clone());
+      public_item
    }
 }
 
@@ -346,8 +361,8 @@ mod tests {
       let dir = TempDir::new().unwrap();
       let events: EventLog = Arc::new(Mutex::new(Vec::new()));
       let captured = events.clone();
-      let on_changed: OnChanged = Arc::new(move |item| {
-         captured.lock().unwrap().push(item);
+      let on_changed: OnChanged = Arc::new(move |event| {
+         captured.lock().unwrap().push(event);
       });
       let manager = DownloadManager::new(dir.path().to_path_buf(), on_changed);
       (manager, dir, events)
@@ -364,10 +379,11 @@ mod tests {
    fn seed(manager: &DownloadManager, path: &str, status: DownloadStatus) {
       manager
          .store
-         .create(DownloadItem {
+         .create(DownloadRecord {
             url: VALID_URL.to_string(),
             path: path.to_string(),
-            progress: 0.0,
+            received_bytes: 0,
+            total_bytes: None,
             status,
          })
          .unwrap();
@@ -382,7 +398,8 @@ mod tests {
       assert_eq!(item.path, "/tmp/unknown.mp4");
       assert_eq!(item.status, DownloadStatus::Pending);
       assert_eq!(item.url, "");
-      assert_eq!(item.progress, 0.0);
+      assert_eq!(item.received_bytes, 0);
+      assert_eq!(item.total_bytes, None);
    }
 
    #[test]
@@ -675,6 +692,7 @@ mod tests {
 
       let stored = manager.store.find_by_path(&path).unwrap().unwrap();
       assert_eq!(stored.status, DownloadStatus::Paused);
+      assert_eq!(stored.received_bytes, b"partial".len() as u64);
 
       assert!(
          event_log(&events)
@@ -688,11 +706,20 @@ mod tests {
       let (manager, dir, _events) = make_manager();
       let path = dir.path().join("file.mp4").to_string_lossy().to_string();
       seed(&manager, &path, DownloadStatus::InProgress);
+      let stale = manager
+         .store
+         .find_by_path(&path)
+         .unwrap()
+         .unwrap()
+         .with_bytes(500, Some(1000));
+      manager.store.update(stale).unwrap();
 
       manager.init();
 
       let stored = manager.store.find_by_path(&path).unwrap().unwrap();
       assert_eq!(stored.status, DownloadStatus::Idle);
+      assert_eq!(stored.received_bytes, 0);
+      assert_eq!(stored.total_bytes, Some(1000));
    }
 
    #[test]

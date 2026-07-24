@@ -51,6 +51,8 @@ export enum DownloadAction {
 export interface DownloadState<S extends DownloadStatus> {
    url: string;
    path: string;
+   receivedBytes: number;
+   totalBytes: number | null;
    progress: number;
    status: S;
 }

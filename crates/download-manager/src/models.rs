@@ -1,11 +1,31 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+/// Persisted download record. Stored in `downloads.json`.
+///
+/// Does not contain `progress` — that is a derived value only present in
+/// [`DownloadItem`], which is what gets sent to the frontend.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DownloadRecord {
+   pub url: String,
+   pub path: String,
+   #[serde(default)]
+   pub received_bytes: u64,
+   #[serde(default)]
+   pub total_bytes: Option<u64>,
+   pub status: DownloadStatus,
+}
+
+/// Public payload sent to the frontend. Built from a [`DownloadRecord`] with
+/// `progress` computed from `received_bytes` / `total_bytes`.
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadItem {
    pub url: String,
    pub path: String,
+   pub received_bytes: u64,
+   pub total_bytes: Option<u64>,
    pub progress: f64,
    pub status: DownloadStatus,
 }
@@ -30,7 +50,7 @@ pub enum DownloadStatus {
    Completed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadActionResponse {
    pub download: DownloadItem,
@@ -39,43 +59,56 @@ pub struct DownloadActionResponse {
 }
 
 impl DownloadActionResponse {
-   pub fn new(download: DownloadItem) -> Self {
-      let expected_status = download.status.clone();
+   pub fn new(item: DownloadItem) -> Self {
+      let expected_status = item.status.clone();
       Self {
-         download,
+         download: item,
          expected_status,
          is_expected_status: true,
       }
    }
 
-   pub fn with_expected_status(download: DownloadItem, expected_status: DownloadStatus) -> Self {
-      let is_expected_status = download.status == expected_status;
+   pub fn with_expected_status(item: DownloadItem, expected_status: DownloadStatus) -> Self {
+      let is_expected_status = item.status == expected_status;
       Self {
-         download,
+         download: item,
          expected_status,
          is_expected_status,
       }
    }
 }
 
-impl DownloadItem {
-   pub fn with_progress(&self, new_progress: f64) -> DownloadItem {
-      DownloadItem {
-         progress: new_progress,
-         status: DownloadStatus::InProgress,
+impl DownloadRecord {
+   pub fn with_bytes(&self, received_bytes: u64, total_bytes: Option<u64>) -> DownloadRecord {
+      DownloadRecord {
+         received_bytes,
+         total_bytes,
          ..self.clone()
       }
    }
 
-   pub fn with_status(&self, new_status: DownloadStatus) -> DownloadItem {
-      DownloadItem {
-         progress: if new_status == DownloadStatus::Completed {
-            100.0
-         } else {
-            self.progress
-         },
+   pub fn with_status(&self, new_status: DownloadStatus) -> DownloadRecord {
+      DownloadRecord {
          status: new_status,
          ..self.clone()
+      }
+   }
+
+   pub fn to_item(&self) -> DownloadItem {
+      let progress = match (&self.status, self.total_bytes) {
+         (DownloadStatus::Completed, _) => 100.0,
+         (_, Some(total)) if total > 0 => {
+            ((self.received_bytes as f64 / total as f64) * 100.0).clamp(0.0, 100.0)
+         }
+         _ => 0.0,
+      };
+      DownloadItem {
+         url: self.url.clone(),
+         path: self.path.clone(),
+         received_bytes: self.received_bytes,
+         total_bytes: self.total_bytes,
+         progress,
+         status: self.status.clone(),
       }
    }
 }
@@ -99,44 +132,110 @@ impl fmt::Display for DownloadStatus {
 mod tests {
    use super::*;
 
-   fn sample_item() -> DownloadItem {
-      DownloadItem {
+   fn sample_record() -> DownloadRecord {
+      DownloadRecord {
          url: "http://example.com/file.mp4".to_string(),
          path: "/tmp/file.mp4".to_string(),
-         progress: 0.0,
+         received_bytes: 0,
+         total_bytes: None,
          status: DownloadStatus::Idle,
       }
    }
 
    #[test]
-   fn test_download_item_with_progress() {
-      let item = sample_item();
-      let updated = item.with_progress(50.0);
-      assert_eq!(updated.progress, 50.0);
-      assert_eq!(updated.status, DownloadStatus::InProgress);
-      assert_eq!(updated.url, item.url);
-      assert_eq!(updated.path, item.path);
+   fn test_download_record_with_bytes() {
+      let record = sample_record();
+      let updated = record.with_bytes(500, Some(1000));
+      assert_eq!(updated.received_bytes, 500);
+      assert_eq!(updated.total_bytes, Some(1000));
+      assert_eq!(updated.status, DownloadStatus::Idle);
+      assert_eq!(updated.url, record.url);
+      assert_eq!(updated.path, record.path);
    }
 
    #[test]
-   fn test_download_item_with_status() {
-      let mut item = sample_item();
-      item.progress = 50.0;
+   fn test_download_record_with_status() {
+      let mut record = sample_record();
+      record.received_bytes = 500;
+      record.total_bytes = Some(1000);
 
-      // Preserves progress for non-completed status
-      let paused = item.with_status(DownloadStatus::Paused);
-      assert_eq!(paused.progress, 50.0);
+      // Preserves bytes for non-completed status
+      let paused = record.with_status(DownloadStatus::Paused);
+      assert_eq!(paused.received_bytes, 500);
+      assert_eq!(paused.total_bytes, Some(1000));
       assert_eq!(paused.status, DownloadStatus::Paused);
 
-      // Sets progress to 100 for completed status
-      let completed = item.with_status(DownloadStatus::Completed);
-      assert_eq!(completed.progress, 100.0);
+      // Status transitions preserve the factual byte counts, including completion.
+      let completed = record.with_status(DownloadStatus::Completed);
+      assert_eq!(completed.received_bytes, 500);
+      assert_eq!(completed.total_bytes, Some(1000));
       assert_eq!(completed.status, DownloadStatus::Completed);
+      assert_eq!(completed.to_item().progress, 100.0);
+   }
+
+   #[test]
+   fn test_with_status_completed_unknown_size() {
+      // Completed with unknown size preserves received_bytes
+      let mut record = sample_record();
+      record.received_bytes = 5000;
+      let completed = record.with_status(DownloadStatus::Completed);
+      assert_eq!(completed.received_bytes, 5000);
+      assert_eq!(completed.total_bytes, None);
+   }
+
+   #[test]
+   fn test_to_item_with_known_size() {
+      let mut record = sample_record();
+      record.received_bytes = 500;
+      record.total_bytes = Some(1000);
+      let item = record.to_item();
+      assert_eq!(item.progress, 50.0);
+      assert_eq!(item.received_bytes, 500);
+      assert_eq!(item.total_bytes, Some(1000));
+   }
+
+   #[test]
+   fn test_to_item_clamps_progress_to_100_percent() {
+      let mut record = sample_record();
+      record.received_bytes = 1500;
+      record.total_bytes = Some(1000);
+      assert_eq!(record.to_item().progress, 100.0);
+   }
+
+   #[test]
+   fn test_to_item_with_unknown_size() {
+      let record = sample_record();
+      let item = record.to_item();
+      assert_eq!(item.progress, 0.0);
+
+      // Completed with unknown size still reports 100%
+      let completed = record.with_status(DownloadStatus::Completed);
+      assert_eq!(completed.to_item().progress, 100.0);
+   }
+
+   #[test]
+   fn test_deserialize_with_byte_fields() {
+      let json = r#"{"url":"http://example.com/f.mp4","path":"/tmp/f.mp4","receivedBytes":500,"totalBytes":1000,"status":"paused"}"#;
+      let record: DownloadRecord = serde_json::from_str(json).unwrap();
+      assert_eq!(record.received_bytes, 500);
+      assert_eq!(record.total_bytes, Some(1000));
+      // progress is derived via to_item(), not stored
+      assert_eq!(record.to_item().progress, 50.0);
+   }
+
+   #[test]
+   fn test_deserialize_without_byte_fields() {
+      // Old format without receivedBytes/totalBytes defaults to 0/None
+      let json = r#"{"url":"http://example.com/f.mp4","path":"/tmp/f.mp4","status":"idle"}"#;
+      let record: DownloadRecord = serde_json::from_str(json).unwrap();
+      assert_eq!(record.received_bytes, 0);
+      assert_eq!(record.total_bytes, None);
    }
 
    #[test]
    fn test_download_action_response() {
-      let item = sample_item();
+      let record = sample_record();
+      let item = record.to_item();
 
       // new() sets is_expected_status to true
       let response = DownloadActionResponse::new(item.clone());
