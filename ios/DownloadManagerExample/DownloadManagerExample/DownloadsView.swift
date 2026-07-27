@@ -64,7 +64,7 @@ struct DownloadsView: View {
          .task {
             downloads = await manager.list()
             for await download in manager.changed {
-               print("[\(download.path)] \(download.status) - \(String(format: "%.0f", download.progress))%")
+               print("[\(download.path.lastPathComponent)] \(download.status) - \(String(format: "%.0f", download.progress))% (\(download.receivedBytes)/\(download.totalBytes.map { String($0) } ?? "unknown") bytes)")
                downloads = await manager.list()
             }
          }
@@ -130,13 +130,26 @@ struct DownloadRowView: View {
    let item: DownloadItem
    let manager: DownloadManager
    
+   /// A server that omits the content length leaves `totalBytes` nil, so the
+   /// total is not always known even while bytes are arriving.
+   private var byteCount: String {
+      let formatter = ByteCountFormatter()
+      let received = formatter.string(fromByteCount: Int64(item.receivedBytes))
+      let total = item.totalBytes.map { formatter.string(fromByteCount: Int64($0)) } ?? "unknown"
+
+      return "\(received) / \(total)"
+   }
+
    var body: some View {
       VStack(alignment: .leading) {
          Text(item.path.lastPathComponent)
             .font(.headline)
          ProgressView(value: item.progress / 100)
             .progressViewStyle(LinearProgressViewStyle())
-         Text("Status: \(item.status.rawValue)")
+         Text("Status: \(item.status.rawValue) — \(String(format: "%.0f", item.progress))%")
+            .font(.caption)
+            .foregroundColor(.secondary)
+         Text(byteCount)
             .font(.caption)
             .foregroundColor(.secondary)
          

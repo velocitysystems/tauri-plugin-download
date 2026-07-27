@@ -35,7 +35,11 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
 
       viewModelScope.launch {
          manager.changed.collect { item ->
-            android.util.Log.d("DownloadsViewModel", "[${File(item.path).name}] ${item.status} - ${String.format("%.0f", item.progress)}%")
+            android.util.Log.d(
+               "DownloadsViewModel",
+               "[${File(item.path).name}] ${item.status} - ${String.format("%.0f", item.progress)}%" +
+                  " (${item.receivedBytes}/${item.totalBytes ?: "unknown"} bytes)",
+            )
             _uiState.value = _uiState.value.copy(downloads = manager.list())
          }
       }
