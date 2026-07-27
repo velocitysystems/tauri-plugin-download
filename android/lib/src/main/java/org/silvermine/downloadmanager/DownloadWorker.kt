@@ -28,7 +28,7 @@ import javax.net.ssl.SSLException
  * Mirrors the Rust downloader.rs pattern:
  * - Supports resume via Range headers
  * - Writes to a temp file (.download suffix), renames on completion
- * - Throttles progress updates to 1% increments
+ * - Throttles progress updates via [ProgressTracker]
  * - Checks store status each progress tick to detect pause/cancel
  * - Runs as a foreground service with a notification
  */
@@ -50,6 +50,11 @@ internal class DownloadWorker(
       } catch (e: Exception) {
          Log.w(TAG, "Failed to set foreground info: ${e.message}")
       }
+
+      // Byte counts outlive the response scope so the completion block below can
+      // report what the progress loop tracked.
+      var finalReceivedBytes = 0L
+      var finalTotalBytes: Long? = null
 
       try {
          // Check the size of the already downloaded part, if any.
@@ -84,8 +89,11 @@ internal class DownloadWorker(
                ?: return handleError(manager, store, path, tempFile, "Empty response body")
 
             // Get the total size of the file from headers (if available).
+            // OkHttp reports -1 when unknown, which stays null rather than
+            // collapsing to a bogus zero total.
             val contentLength = body.contentLength()
-            val totalSize = if (contentLength > 0) contentLength + downloadedSize else 0L
+            val contentLengthSum = contentLength + downloadedSize
+            val totalSize = if (contentLength > 0 && contentLengthSum > 0) contentLengthSum else null
 
             // Ensure the output folder exists.
             tempFile.parentFile?.let { parent ->
@@ -94,16 +102,25 @@ internal class DownloadWorker(
 
             // Open the temp file in append mode (or truncate if restarting from zero).
             val append = downloadedSize > 0
-            var downloaded = downloadedSize
-            var lastEmittedProgress = 0.0
-            var lastEmittedBytes = downloadedSize
 
-            // Update status to in-progress.
-            store.findByPath(path)?.let { item ->
-               val updated = item.withStatus(DownloadStatus.InProgress)
-               store.update(updated)
-               manager.emitChanged(updated)
+            // The temp file is the authority: a server that ignores the Range header
+            // restarts from zero and the record must follow it down. Synchronized
+            // against pause/cancel; a pause landing first is undone by isStopped below.
+            var effectiveTotal = totalSize
+
+            synchronized(manager) {
+               store.findByPath(path)?.let { record ->
+                  val updated = record.withBytes(downloadedSize, totalSize)
+
+                  effectiveTotal = updated.totalBytes
+                  store.update(updated.withStatus(DownloadStatus.InProgress))
+               }
             }
+
+            // Falls back to the record's known total: without it an unknown content
+            // length drops the transfer onto the coarse byte cadence and contradicts
+            // the indeterminate flag, which keys off the coalesced emitted total.
+            val progressTracker = ProgressTracker(downloadedSize, effectiveTotal)
 
             FileOutputStream(tempFile, append).use { output ->
                val buffer = ByteArray(BUFFER_SIZE)
@@ -113,6 +130,7 @@ internal class DownloadWorker(
                   // Check if the worker has been stopped (canceled externally).
                   if (isStopped) {
                      source.close()
+                     revertInProgressRecord(manager, store, path)
                      dismissNotification()
                      return Result.success()
                   }
@@ -121,35 +139,37 @@ internal class DownloadWorker(
                   if (bytesRead == -1) break
 
                   output.write(buffer, 0, bytesRead)
-                  downloaded += bytesRead
+                  progressTracker.advance(bytesRead.toLong())
 
-                  val progress = if (totalSize > 0) {
-                     (downloaded.toDouble() / totalSize.toDouble()) * 100.0
-                  } else {
-                     0.0
-                  }
+                  if (!progressTracker.shouldEmit()) continue
 
-                  // Throttle progress updates:
-                  // - Known size: emit when progress increases by at least 1%.
-                  // - Unknown size: emit every BYTES_THRESHOLD bytes.
-                  val shouldThrottle = if (totalSize > 0) {
-                     progress < 100.0 && progress - lastEmittedProgress <= PROGRESS_THRESHOLD
-                  } else {
-                     downloaded - lastEmittedBytes < BYTES_THRESHOLD
-                  }
-                  if (shouldThrottle) continue
+                  progressTracker.markEmitted()
 
-                  lastEmittedProgress = progress
-                  lastEmittedBytes = downloaded
-                  val currentItem = store.findByPath(path) ?: break
+                  // Read and write as one step: pause() holds this same monitor, and a
+                  // pause landing between them is overwritten back to InProgress. Since
+                  // cancelUniqueWork() is async, a resume in that window then reports
+                  // success and enqueues nothing. Emit and notify outside the lock.
+                  val currentRecord = synchronized(manager) {
+                     val record = store.findByPath(path)
 
-                  when (currentItem.status) {
+                     if (record != null && record.status == DownloadStatus.InProgress && !progressTracker.isComplete()) {
+                        val updated = record
+                           .withBytes(progressTracker.receivedBytes, totalSize)
+                           .withStatus(DownloadStatus.InProgress)
+
+                        store.update(updated, persist = false)
+                        updated
+                     } else {
+                        record
+                     }
+                  } ?: break
+
+                  when (currentRecord.status) {
                      DownloadStatus.InProgress -> {
-                        if (progress < 100.0) {
-                           val updated = currentItem.withProgress(progress)
-                           store.update(updated, persist = false)
-                           manager.emitChanged(updated)
-                           updateNotificationProgress(path, progress.toInt())
+                        if (!progressTracker.isComplete()) {
+                           // Emit the record just written.
+                           val item = manager.emitChanged(currentRecord)
+                           updateNotificationProgress(path, item.progress.toInt(), indeterminate = item.totalBytes == null)
                         }
                         // Completion is handled after the loop exits naturally.
                      }
@@ -168,15 +188,18 @@ internal class DownloadWorker(
                   }
                }
             }
+
+            finalReceivedBytes = progressTracker.receivedBytes
+            finalTotalBytes = totalSize
          }
 
          // Download completed — rename temp file to final path and update store.
          // Synchronized on manager to prevent interleaving with cancel/pause,
          // mirroring the iOS actor serialization pattern.
          var renameFailed = false
-         synchronized(manager) {
-            val currentItem = store.findByPath(path)
-            if (currentItem != null && currentItem.status == DownloadStatus.InProgress) {
+         synchronized<Unit>(manager) {
+            val currentRecord = store.findByPath(path)
+            if (currentRecord != null && currentRecord.status == DownloadStatus.InProgress) {
                val finalFile = File(path)
                finalFile.parentFile?.let { parent ->
                   if (!parent.exists()) parent.mkdirs()
@@ -187,8 +210,10 @@ internal class DownloadWorker(
                if (!tempFile.renameTo(finalFile)) {
                   renameFailed = true
                } else {
-                  val completed = currentItem.withStatus(DownloadStatus.Completed)
-                  store.remove(currentItem)
+                  val completed = currentRecord
+                     .withBytes(finalReceivedBytes, finalTotalBytes)
+                     .withStatus(DownloadStatus.Completed)
+                  store.remove(currentRecord)
                   manager.emitChanged(completed)
                }
             } else {
@@ -221,6 +246,31 @@ internal class DownloadWorker(
    }
 
    /**
+    * Reverts a record still marked InProgress when this worker stops early —
+    * either stopped externally, or out of retries on a transient error.
+    *
+    * A pause cancels the WorkManager work and sets the record to Paused, but the
+    * worker may already have written InProgress back before observing isStopped.
+    * Without this the record would stay InProgress with no worker behind it until
+    * the next reconcileStoreOnInit().
+    *
+    * [DownloadManager.revertInProgress] decides the resulting status, so this and
+    * reconciliation cannot drift apart. The temp file is left in place, and a
+    * record that is no longer InProgress — a pause that landed first — is left
+    * alone rather than overwritten.
+    */
+   private fun revertInProgressRecord(manager: DownloadManager, store: DownloadStore, path: String) {
+      // Synchronized on manager to prevent interleaving with cancel/pause.
+      synchronized(manager) {
+         val record = store.findByPath(path) ?: return
+         val reverted = DownloadManager.revertInProgress(record, tempFileLength(path)) ?: return
+
+         store.update(reverted)
+         manager.emitChanged(reverted)
+      }
+   }
+
+   /**
     * Handles permanent failures (HTTP errors, rename failures, DNS/TLS errors).
     * Deletes the temp file, cancels the download, and removes it from the store.
     */
@@ -230,9 +280,9 @@ internal class DownloadWorker(
       // Synchronized on manager to prevent interleaving with cancel/pause.
       synchronized(manager) {
          if (tempFile.exists()) tempFile.delete()
-         store.findByPath(path)?.let { item ->
-            val canceled = item.withStatus(DownloadStatus.Canceled)
-            store.remove(item)
+         store.findByPath(path)?.let { record ->
+            val canceled = record.withStatus(DownloadStatus.Canceled)
+            store.remove(record)
             manager.emitChanged(canceled)
          }
       }
@@ -250,14 +300,7 @@ internal class DownloadWorker(
    private fun handleTransientError(manager: DownloadManager, store: DownloadStore, path: String, message: String): Result {
       Log.w(TAG, "Download failed (transient) for $path: $message")
 
-      // Synchronized on manager to prevent interleaving with cancel/pause.
-      synchronized(manager) {
-         store.findByPath(path)?.let { item ->
-            val paused = item.withStatus(DownloadStatus.Paused)
-            store.update(paused)
-            manager.emitChanged(paused)
-         }
-      }
+      revertInProgressRecord(manager, store, path)
 
       dismissNotification()
       return Result.failure()
@@ -297,8 +340,8 @@ internal class DownloadWorker(
       }
    }
 
-   private fun updateNotificationProgress(path: String, progress: Int) {
-      val notification = buildNotification(File(path).name, progress, indeterminate = false)
+   private fun updateNotificationProgress(path: String, progress: Int, indeterminate: Boolean) {
+      val notification = buildNotification(File(path).name, progress, indeterminate)
       val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
       notificationManager.notify(notificationID(), notification)
    }
@@ -348,10 +391,19 @@ internal class DownloadWorker(
       internal const val TAG = "DownloadWorker"
       internal const val DOWNLOAD_SUFFIX = ".download"
       private const val BUFFER_SIZE = 64 * 1024
-      private const val PROGRESS_THRESHOLD = 1.0
-      private const val BYTES_THRESHOLD = 1024L * 1024L
       private const val MAX_RETRIES = 3
       private const val NOTIFICATION_CHANNEL_ID = "download_manager_channel"
+
+      /**
+       * The length of a download's temp file, or `null` when it is absent.
+       *
+       * @param path The download path.
+       * @return The temp file's length, or `null` when there is no temp file.
+       */
+      internal fun tempFileLength(path: String): Long? {
+         val tempFile = File("$path$DOWNLOAD_SUFFIX")
+         return if (tempFile.exists()) tempFile.length() else null
+      }
 
       private fun isTransient(e: IOException): Boolean = when (e) {
          is UnknownHostException -> false  // DNS resolution failed
