@@ -16,6 +16,7 @@
       </div>
       <div class="item-info">
          <p class="state-text">State: {{ currentDownload.status }}</p>
+         <p class="byte-text">{{ byteCount }}</p>
          <p class="progress-text">{{ Math.round(currentDownload.progress) }}%</p>
       </div>
    </div>
@@ -43,6 +44,30 @@ const props = defineProps<{ download: DownloadWithAnyStatus, url?: string }>(),
       canCancel = computed(() => { return hasAction(currentDownload.value, DownloadAction.Cancel); }),
       canPause = computed(() => { return hasAction(currentDownload.value, DownloadAction.Pause); }),
       canResume = computed(() => { return hasAction(currentDownload.value, DownloadAction.Resume); });
+
+const BYTE_UNITS = [ 'B', 'KB', 'MB', 'GB', 'TB' ];
+
+function formatBytes(bytes: number): string {
+   let value = bytes,
+       unitIndex = 0;
+
+   while (value >= 1024 && unitIndex < BYTE_UNITS.length - 1) {
+      value = value / 1024;
+      unitIndex = unitIndex + 1;
+   }
+
+   return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${BYTE_UNITS[unitIndex]}`;
+}
+
+// A server that omits the content length leaves totalBytes null, so the total
+// is not always known even while bytes are arriving. A strict null check is safe:
+// attachDownload() normalizes an absent key to null before it reaches here.
+const byteCount = computed<string>(() => {
+   const { receivedBytes, totalBytes } = currentDownload.value,
+         total = totalBytes === null ? 'unknown' : formatBytes(totalBytes);
+
+   return `${formatBytes(receivedBytes)} / ${total}`;
+});
 
 
 let unlisten: UnlistenFn | undefined;
@@ -198,6 +223,13 @@ async function doAction<A extends NoArgAction>(action: A): Promise<void> {
     font-size: 14px;
     color: #555;
     margin: 0;
+  }
+
+  .byte-text {
+    font-size: 14px;
+    color: #555;
+    margin: 0;
+    white-space: nowrap;
   }
 
   .progress-bar {
