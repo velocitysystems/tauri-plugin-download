@@ -46,19 +46,21 @@ class DownloadManager private constructor(context: Context) {
     * Mirrors the Rust Download.init() method.
     */
    private fun reconcileStoreOnInit() {
-      val items = store.list()
-      for (item in items) {
-         if (item.status == DownloadStatus.InProgress) {
-            val tempFile = File("${item.path}${DownloadWorker.DOWNLOAD_SUFFIX}")
-            val newStatus = if (tempFile.exists()) {
-               DownloadStatus.Paused
+      val records = store.list()
+      for (record in records) {
+         if (record.status == DownloadStatus.InProgress) {
+            // Progress updates avoid disk writes, so the persisted byte count is
+            // stale by whatever was in flight. Only the temp file's length says
+            // what survived. totalBytes is kept — headers persisted it.
+            val tempFile = File("${record.path}${DownloadWorker.DOWNLOAD_SUFFIX}")
+            val updated = if (tempFile.exists()) {
+               record.withBytes(tempFile.length(), record.totalBytes).withStatus(DownloadStatus.Paused)
             } else {
-               DownloadStatus.Idle
+               record.withBytes(0L, record.totalBytes).withStatus(DownloadStatus.Idle)
             }
 
-            val updated = item.withStatus(newStatus)
             store.update(updated)
-            Log.d(TAG, "[${File(item.path).name}] Reconciled to $newStatus")
+            Log.d(TAG, "[${File(record.path).name}] Reconciled to ${updated.status}")
          }
       }
    }
@@ -68,7 +70,7 @@ class DownloadManager private constructor(context: Context) {
     *
     * @return The list of download operations.
     */
-   fun list(): List<DownloadItem> = store.list()
+   fun list(): List<DownloadItem> = store.list().map { it.toItem() }
 
    /**
     * Gets a download operation.
@@ -82,14 +84,13 @@ class DownloadManager private constructor(context: Context) {
     */
    fun get(path: String): DownloadItem {
       val existing = store.findByPath(path)
-      if (existing != null) return existing
+      if (existing != null) return existing.toItem()
 
-      return DownloadItem(
+      return DownloadRecord(
          url = "",
          path = path,
-         progress = 0.0,
          status = DownloadStatus.Pending,
-      )
+      ).toItem()
    }
 
    /**
@@ -103,14 +104,13 @@ class DownloadManager private constructor(context: Context) {
    fun create(path: String, url: String): DownloadActionResponse {
       val existing = store.findByPath(path)
       if (existing != null) {
-         return DownloadActionResponse.withExpectedStatus(existing, DownloadStatus.Idle)
+         return DownloadActionResponse.withExpectedStatus(existing.toItem(), DownloadStatus.Idle)
       }
 
-      val item = DownloadItem(url = url, path = path)
-      store.append(item)
-      emitChanged(item)
+      val record = DownloadRecord(url = url, path = path)
+      store.append(record)
 
-      return DownloadActionResponse.new(item)
+      return DownloadActionResponse.new(emitChanged(record))
    }
 
    /**
@@ -122,19 +122,19 @@ class DownloadManager private constructor(context: Context) {
     */
    @Synchronized
    fun start(path: String): DownloadActionResponse {
-      val item = store.findByPath(path)
+      val record = store.findByPath(path)
          ?: throw DownloadException.NotFound(path)
 
-      if (item.status != DownloadStatus.Idle) {
-         return DownloadActionResponse.withExpectedStatus(item, DownloadStatus.InProgress)
+      if (record.status != DownloadStatus.Idle) {
+         return DownloadActionResponse.withExpectedStatus(record.toItem(), DownloadStatus.InProgress)
       }
 
-      val updated = item.withStatus(DownloadStatus.InProgress)
+      val updated = record.withStatus(DownloadStatus.InProgress)
       store.update(updated)
-      emitChanged(updated)
-      enqueueDownload(item)
+      val item = emitChanged(updated)
+      enqueueDownload(record)
 
-      return DownloadActionResponse.new(updated)
+      return DownloadActionResponse.new(item)
    }
 
    /**
@@ -146,19 +146,19 @@ class DownloadManager private constructor(context: Context) {
     */
    @Synchronized
    fun resume(path: String): DownloadActionResponse {
-      val item = store.findByPath(path)
+      val record = store.findByPath(path)
          ?: throw DownloadException.NotFound(path)
 
-      if (item.status != DownloadStatus.Paused) {
-         return DownloadActionResponse.withExpectedStatus(item, DownloadStatus.InProgress)
+      if (record.status != DownloadStatus.Paused) {
+         return DownloadActionResponse.withExpectedStatus(record.toItem(), DownloadStatus.InProgress)
       }
 
-      val updated = item.withStatus(DownloadStatus.InProgress)
+      val updated = record.withStatus(DownloadStatus.InProgress)
       store.update(updated)
-      emitChanged(updated)
-      enqueueDownload(item)
+      val item = emitChanged(updated)
+      enqueueDownload(record)
 
-      return DownloadActionResponse.new(updated)
+      return DownloadActionResponse.new(item)
    }
 
    /**
@@ -170,23 +170,24 @@ class DownloadManager private constructor(context: Context) {
     */
    @Synchronized
    fun pause(path: String): DownloadActionResponse {
-      val item = store.findByPath(path)
+      val record = store.findByPath(path)
          ?: throw DownloadException.NotFound(path)
 
-      if (item.status != DownloadStatus.InProgress) {
-         return DownloadActionResponse.withExpectedStatus(item, DownloadStatus.Paused)
+      if (record.status != DownloadStatus.InProgress) {
+         return DownloadActionResponse.withExpectedStatus(record.toItem(), DownloadStatus.Paused)
       }
 
       // Update status to paused — the DownloadWorker checks the store status
-      // on each progress tick and will stop reading when it sees Paused.
-      val updated = item.withStatus(DownloadStatus.Paused)
+      // on each progress tick and will stop reading when it sees Paused. This
+      // also persists the byte count from the last tick.
+      val updated = record.withStatus(DownloadStatus.Paused)
       store.update(updated)
-      emitChanged(updated)
+      val item = emitChanged(updated)
 
       // Also cancel the WorkManager work to stop the worker promptly.
       workManager.cancelUniqueWork(workName(path))
 
-      return DownloadActionResponse.new(updated)
+      return DownloadActionResponse.new(item)
    }
 
    /**
@@ -198,14 +199,14 @@ class DownloadManager private constructor(context: Context) {
     */
    @Synchronized
    fun cancel(path: String): DownloadActionResponse {
-      val item = store.findByPath(path)
+      val record = store.findByPath(path)
          ?: throw DownloadException.NotFound(path)
 
-      if (item.status != DownloadStatus.Idle &&
-         item.status != DownloadStatus.InProgress &&
-         item.status != DownloadStatus.Paused
+      if (record.status != DownloadStatus.Idle &&
+         record.status != DownloadStatus.InProgress &&
+         record.status != DownloadStatus.Paused
       ) {
-         return DownloadActionResponse.withExpectedStatus(item, DownloadStatus.Canceled)
+         return DownloadActionResponse.withExpectedStatus(record.toItem(), DownloadStatus.Canceled)
       }
 
       // Cancel the WorkManager work if running.
@@ -216,26 +217,29 @@ class DownloadManager private constructor(context: Context) {
       if (tempFile.exists()) tempFile.delete()
 
       // Remove from store and emit change.
-      val canceled = item.withStatus(DownloadStatus.Canceled)
-      store.remove(item)
-      emitChanged(canceled)
+      val canceled = record.withStatus(DownloadStatus.Canceled)
+      store.remove(record)
 
-      return DownloadActionResponse.new(canceled)
+      return DownloadActionResponse.new(emitChanged(canceled))
    }
 
    /**
-    * Emits a download item change event.
+    * Emits a download change event, derived from the persisted record.
     * Called by DownloadWorker to report progress and completion.
+    *
+    * Returns the emitted payload for reuse in a [DownloadActionResponse].
     */
-   internal fun emitChanged(item: DownloadItem) {
+   internal fun emitChanged(record: DownloadRecord): DownloadItem {
+      val item = record.toItem()
       _changed.tryEmit(item)
+      return item
    }
 
    /**
     * Enqueues a WorkManager work request for the download.
     * Uses unique work keyed by path to prevent duplicate workers.
     */
-   private fun enqueueDownload(item: DownloadItem) {
+   private fun enqueueDownload(record: DownloadRecord) {
       val constraints = Constraints.Builder()
          .setRequiredNetworkType(NetworkType.CONNECTED)
          .build()
@@ -244,15 +248,15 @@ class DownloadManager private constructor(context: Context) {
          .setConstraints(constraints)
          .setInputData(
             workDataOf(
-               DownloadWorker.KEY_URL to item.url,
-               DownloadWorker.KEY_PATH to item.path,
+               DownloadWorker.KEY_URL to record.url,
+               DownloadWorker.KEY_PATH to record.path,
             )
          )
          .addTag(WORK_TAG)
          .build()
 
       workManager.enqueueUniqueWork(
-         workName(item.path),
+         workName(record.path),
          ExistingWorkPolicy.REPLACE,
          workRequest,
       )

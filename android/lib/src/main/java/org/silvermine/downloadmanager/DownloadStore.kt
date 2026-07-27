@@ -8,7 +8,7 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
- * Thread-safe store for download items backed by an atomic JSON file.
+ * Thread-safe store for download records backed by an atomic JSON file.
  *
  * All public methods are synchronized to ensure consistency when accessed
  * from multiple threads (e.g. WorkManager workers and the main thread).
@@ -17,26 +17,26 @@ import java.io.File
 internal class DownloadStore(context: Context) {
    private val json = Json { ignoreUnknownKeys = true }
    private val file = AtomicFile(File(context.filesDir, STORE_FILENAME))
-   private val downloads = mutableMapOf<String, DownloadItem>()
+   private val downloads = mutableMapOf<String, DownloadRecord>()
 
    init {
       load()
    }
 
    @Synchronized
-   fun list(): List<DownloadItem> = downloads.values.toList()
+   fun list(): List<DownloadRecord> = downloads.values.toList()
 
    @Synchronized
-   fun findByPath(path: String): DownloadItem? = downloads[path]
+   fun findByPath(path: String): DownloadRecord? = downloads[path]
 
    @Synchronized
-   fun append(item: DownloadItem) {
+   fun append(item: DownloadRecord) {
       downloads[item.path] = item
       save()
    }
 
    @Synchronized
-   fun update(item: DownloadItem, persist: Boolean = true) {
+   fun update(item: DownloadRecord, persist: Boolean = true) {
       if (downloads.containsKey(item.path)) {
          downloads[item.path] = item
       }
@@ -46,7 +46,7 @@ internal class DownloadStore(context: Context) {
    }
 
    @Synchronized
-   fun remove(item: DownloadItem) {
+   fun remove(item: DownloadRecord) {
       downloads.remove(item.path)
       save()
    }
@@ -54,7 +54,7 @@ internal class DownloadStore(context: Context) {
    private fun load() {
       try {
          val bytes = file.readFully()
-         val items: List<DownloadItem> = json.decodeFromString(String(bytes))
+         val items: List<DownloadRecord> = json.decodeFromString(String(bytes))
          downloads.clear()
          for (item in items) {
             downloads[item.path] = item
