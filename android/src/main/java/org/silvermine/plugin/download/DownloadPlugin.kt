@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.json.JSONArray
+import java.io.File
 
 @InvokeArg
 class PathArgs {
@@ -44,7 +45,7 @@ class DownloadPlugin(activity: Activity) : Plugin(activity) {
          downloadManager.changed.collect { item ->
             try {
                trigger("changed", JSObject(json.encodeToString(item)))
-               Log.d(TAG, "[${item.path}] ${item.status} - ${"%.0f".format(item.progress)}%")
+               Log.d(TAG, "[${File(item.path).name}] ${item.status} - ${item.receivedBytes}/${item.totalBytes ?: "unknown"} bytes")
             } catch (e: Exception) {
                Log.e(TAG, "Failed to emit changed event: ${e.message}")
             }
