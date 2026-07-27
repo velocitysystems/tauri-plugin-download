@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import os.log
 
 /// A manager class responsible for handling download operations.
 /// Used to provide functionality for downloading files, tracking download progress and handling completion events.
@@ -30,6 +31,15 @@ public final class DownloadManager: NSObject {
    private let store = DownloadStore()
    private let backgroundSessionHandler = BackgroundSessionHandler()
 
+   /// Reconciliation runs once, at init. Assigned before any caller can reach the
+   /// instance and never written again; every public entry point awaits it so a
+   /// caller cannot observe or mutate a record it is about to rewrite.
+   ///
+   /// `var` and optional rather than `let`: as an NSObject subclass every stored
+   /// property must be initialized before `super.init()`, but the task needs the
+   /// `self` that only exists after it.
+   private var reconcileTask: Task<Void, Never>?
+
    override init() {
       super.init()
       sessionDelegate = DownloadSessionDelegate()
@@ -38,6 +48,10 @@ public final class DownloadManager: NSObject {
       // delegateQueue: nil creates a serial operation queue for delegate callbacks by default
       let config = URLSessionConfiguration.background(withIdentifier: Bundle.main.bundleIdentifier!)
       session = URLSession(configuration: config, delegate: sessionDelegate, delegateQueue: nil)
+
+      reconcileTask = Task { [weak self] in
+         await self?.reconcileStore()
+      }
    }
    
    deinit {
@@ -58,7 +72,9 @@ public final class DownloadManager: NSObject {
     - Returns: The list of download operations.
     */
    public func list() async -> [DownloadItem] {
-      return await store.list()
+      await ensureReconciled()
+
+      return await store.list().map { $0.toItem() }
    }
     
    /**
@@ -72,11 +88,13 @@ public final class DownloadManager: NSObject {
     - Returns: The download operation.
     */
    public func get(path: URL) async -> DownloadItem {
-      if let item = await store.findByPath(path) {
-         return item
+      await ensureReconciled()
+
+      if let record = await store.findByPath(path) {
+         return record.toItem()
       }
 
-      return DownloadItem(url: URL(fileURLWithPath: ""), path: path, status: .pending)
+      return DownloadRecord(url: URL(fileURLWithPath: ""), path: path, status: .pending).toItem()
    }
    
    /**
@@ -88,13 +106,15 @@ public final class DownloadManager: NSObject {
     - Returns: The download operation.
     */
    public func create(path: URL, url: URL) async -> DownloadActionResponse {
+      await ensureReconciled()
+
       if let existing = await store.findByPath(path) {
-         return DownloadActionResponse(download: existing, expectedStatus: .idle)
+         return DownloadActionResponse(download: existing.toItem(), expectedStatus: .idle)
       }
 
-      let item = DownloadItem(url: url, path: path)
-      await store.append(item)
-      await emitChanged(item)
+      let record = DownloadRecord(url: url, path: path)
+      await store.append(record)
+      let item = await emitChanged(record)
       
       return DownloadActionResponse(download: item)
    }
@@ -106,21 +126,27 @@ public final class DownloadManager: NSObject {
     - Returns: The download operation.
     */
    public func start(path: URL) async throws -> DownloadActionResponse {
-      guard var item = await store.findByPath(path) else {
+      await ensureReconciled()
+
+      guard var record = await store.findByPath(path) else {
          throw DownloadError.notFound(path.path)
       }
 
-      guard item.status == .idle else {
-         return DownloadActionResponse(download: item, expectedStatus: .inProgress)
+      guard record.status == .idle else {
+         return DownloadActionResponse(download: record.toItem(), expectedStatus: .inProgress)
       }
       
-      let task = session.downloadTask(with: item.url)
+      // Commit InProgress before the task can call back: handleProgress ignores
+      // records that are not InProgress, so a fast first callback would otherwise
+      // be dropped. Rust persists the status before spawning too.
+      record.setStatus(.inProgress)
+      await store.update(record)
+
+      let task = session.downloadTask(with: record.url)
       task.taskDescription = path.path
       task.resume()
       
-      item.setStatus(.inProgress)
-      await store.update(item)
-      await emitChanged(item)
+      let item = await emitChanged(record)
       
       return DownloadActionResponse(download: item)
    }
@@ -132,24 +158,57 @@ public final class DownloadManager: NSObject {
     - Returns: The download operation.
     */
    public func resume(path: URL) async throws -> DownloadActionResponse {
-      guard var item = await store.findByPath(path) else {
+      await ensureReconciled()
+
+      guard var record = await store.findByPath(path) else {
          throw DownloadError.notFound(path.path)
       }
       
-      guard item.status == .paused,
-            let data = loadResumeData(for: item) else {
-         return DownloadActionResponse(download: item, expectedStatus: .inProgress)
+      guard record.status == .paused else {
+         return DownloadActionResponse(download: record.toItem(), expectedStatus: .inProgress)
       }
+
+      // Commit InProgress before starting the task, as in start().
+      record.setStatus(.inProgress)
+      await store.update(record)
       
-      let task = session.downloadTask(withResumeData: data)
+      // Absence is not a refusal. pause() sets .paused whether or not URLSession
+      // produced resume data, so a server without byte-range support leaves a paused
+      // record with none — and requiring it here left that record stuck for good.
+      // Rust and Android also restart from zero when their partial file is missing.
+      let resumeData = loadResumeData(for: record)
+      let task: URLSessionDownloadTask
+
+      if let resumeData, !resumeData.isEmpty {
+         task = session.downloadTask(withResumeData: resumeData)
+      } else {
+         os_log(.info, log: Log.downloadManager,
+                "No usable resume data for %{public}@, restarting from zero",
+                record.path.lastPathComponent)
+
+         // Reset before the task starts, so the first callback is not overwritten.
+         deleteResumeData(for: record)
+         record.setResumeDataPath(nil)
+         record.setBytes(received: 0, total: record.totalBytes)
+         await store.update(record)
+
+         task = session.downloadTask(with: record.url)
+      }
+
       task.taskDescription = path.path
       task.resume()
-      deleteResumeData(for: item)
 
-      item.setResumeDataPath(nil)
-      item.setStatus(.inProgress)
-      await store.update(item)
-      await emitChanged(item)
+      // Only now that the task owns the data can its file go. Deleting it any
+      // earlier means a process death in this window loses the partial download
+      // outright, rather than leaving it resumable. A no-op on the restart path,
+      // which cleared its own file already.
+      deleteResumeData(for: record)
+
+      // In the actor: the task is already running, so a progress callback landing
+      // between a read and a write here would lose its byte count.
+      let updated = await mutateRecord(path: path) { $0.setResumeDataPath(nil) }
+
+      let item = await emitChanged(updated ?? record)
       
       return DownloadActionResponse(download: item)
    }
@@ -161,23 +220,25 @@ public final class DownloadManager: NSObject {
     - Returns: The download operation.
     */
    public func pause(path: URL) async throws -> DownloadActionResponse {
-      guard let item = await store.findByPath(path) else {
+      await ensureReconciled()
+
+      guard let record = await store.findByPath(path) else {
          throw DownloadError.notFound(path.path)
       }
 
-      guard item.status == .inProgress,
+      guard record.status == .inProgress,
             let task = await getDownloadTask(path.path) else {
-         return DownloadActionResponse(download: item, expectedStatus: .paused)
+         return DownloadActionResponse(download: record.toItem(), expectedStatus: .paused)
       }
       
-      // Cancel task and collect resume data via callback. The callback and
-      // handleError may both try to persist resume data; mutateItem serializes
-      // access through the actor so only one wins, and the duplicate is cleaned up.
+      // Three writers can be in flight at once — this callback, the status mutation
+      // below, and handleError. mutateRecord applies each inside the actor, so the
+      // first to persist a path wins and the duplicate file is cleaned up.
       task.cancel(byProducingResumeData: { [weak self] data in
          guard let self, let data else { return }
          let savedURL = self.saveResumeData(data)
          Task {
-            let updated = await self.mutateItem(path: path) { current in
+            let updated = await self.mutateRecord(path: path) { current in
                if current.resumeDataPath == nil {
                   current.setResumeDataPath(savedURL)
                }
@@ -188,11 +249,13 @@ public final class DownloadManager: NSObject {
          }
       })
 
-      let updated = await mutateItem(path: path) { $0.setStatus(.paused) }
-      let result = updated ?? item
-      await emitChanged(result)
-      
-      return DownloadActionResponse(download: result)
+      // Persisting here is what carries the last progress tick's byte count
+      // across the pause.
+      let updated = await mutateRecord(path: path) { $0.setStatus(.paused) }
+      let result = updated ?? record
+      let item = await emitChanged(result)
+
+      return DownloadActionResponse(download: item)
    }
    
    /**
@@ -202,26 +265,28 @@ public final class DownloadManager: NSObject {
     - Returns: The download operation.
     */
    public func cancel(path: URL) async throws -> DownloadActionResponse {
-      guard var item = await store.findByPath(path) else {
+      await ensureReconciled()
+
+      guard var record = await store.findByPath(path) else {
          throw DownloadError.notFound(path.path)
       }
 
-      guard item.status == .idle || item.status == .inProgress || item.status == .paused else {
-         return DownloadActionResponse(download: item, expectedStatus: .canceled)
+      guard record.status == .idle || record.status == .inProgress || record.status == .paused else {
+         return DownloadActionResponse(download: record.toItem(), expectedStatus: .canceled)
       }
       
       if let task = await getDownloadTask(path.path) {
          task.cancel()
       }
       
-      if let _ = loadResumeData(for: item) {
-         deleteResumeData(for: item)
-         item.setResumeDataPath(nil)
+      if let _ = loadResumeData(for: record) {
+         deleteResumeData(for: record)
+         record.setResumeDataPath(nil)
       }
       
-      item.setStatus(.canceled)
-      await store.remove(item)
-      await emitChanged(item)
+      record.setStatus(.canceled)
+      await store.remove(record)
+      let item = await emitChanged(record)
       
       return DownloadActionResponse(download: item)
    }
@@ -232,23 +297,52 @@ public final class DownloadManager: NSObject {
     - Parameters:
       - url: The URL of the download.
       - totalBytesWritten: The total number of bytes transferred so far.
-      - totalBytesExpectedToWrite: The expected length of the file.
+      - totalBytesExpectedToWrite: The expected length of the file, or a negative
+        value when the server did not supply a content length.
     */
    func handleProgress(url: URL, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) async {
-      guard var item = await store.findByUrl(url),
-            totalBytesExpectedToWrite > 0 else { return }
-      
-      let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) * 100
-      
-      // Throttle progress updates - only emit if progress increases by at least 1%
-      let progressThreshold = 1.0
-      if progress < 100.0 && progress - item.progress < progressThreshold {
-         return
+      guard var record = await store.findByUrl(url),
+            record.status == .inProgress else { return }
+
+      let receivedBytes = UInt64(max(totalBytesWritten, 0))
+      let totalBytes: UInt64? = totalBytesExpectedToWrite > 0 ? UInt64(totalBytesExpectedToWrite) : nil
+
+      // Record a known total independently of the throttle below. handleFinished
+      // reads the total back off the record, so a download that completes without
+      // ever passing the throttle — a small file whose first callback is already
+      // at 100% — would otherwise report no total.
+      if let totalBytes, let updated = await store.setTotalIfChanged(path: record.path, total: totalBytes) {
+         record = updated
       }
       
-      item.setProgress(progress)
-      await store.update(item, persist: false)
-      await emitChanged(item)
+      // This callback may report no total (a resume the server answers without a
+      // content length) for a record that already knows one. setBytes() coalesces
+      // on its own, but the tracker takes the total directly, and without it the
+      // cadence would silently fall back to the byte threshold.
+      let effectiveTotal = totalBytes ?? record.totalBytes
+
+      // Every emission writes the byte count back to the store, so the stored
+      // record is itself the last-emitted baseline. That keeps throttle state off
+      // this class, which would otherwise need synchronizing across callbacks.
+      let tracker = ProgressTracker(
+         lastEmittedBytes: record.receivedBytes,
+         receivedBytes: receivedBytes,
+         totalBytes: effectiveTotal
+      )
+
+      // Completion is reported by handleFinished, which sizes the landed file.
+      guard tracker.shouldEmit, !tracker.isComplete else { return }
+
+      // Bytes only, in the actor: a pause landing between this callback's read and
+      // its write would otherwise be overwritten by this stale InProgress. Emit what
+      // the store returned, for the same reason.
+      guard let updated = await mutateRecord(path: record.path, persist: false, {
+         $0.setBytes(received: receivedBytes, total: effectiveTotal)
+      }) else {
+         return
+      }
+
+      await emitChanged(updated)
    }
 
    /**
@@ -260,26 +354,55 @@ public final class DownloadManager: NSObject {
       - location: The temporary location of the downloaded file.
     */
    func handleFinished(url: URL, location: URL) async {
-      guard var item = await store.findByUrl(url) else {
+      guard var record = await store.findByUrl(url) else {
          try? FileManager.default.removeItem(at: location)
          return
       }
 
-      // Ensure parent directory exists.
-      let parentDirectory = item.path.deletingLastPathComponent()
-      if !FileManager.default.fileExists(atPath: parentDirectory.path) {
-         try? FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
+      do {
+         try DownloadManager.placeDownloadedFile(from: location, to: record.path)
+      } catch {
+         os_log(.error, log: Log.downloadManager, "Failed to place %{public}@: %{public}@",
+                record.path.lastPathComponent, error.localizedDescription)
+
+         // No record names this temp file, so it is removed here or never — and a
+         // record left InProgress with no task behind it would never emit again.
+         try? FileManager.default.removeItem(at: location)
+
+         record.setStatus(.canceled)
+         await store.remove(record)
+         await emitChanged(record)
+
+         return
       }
 
-      // Remove existing item (if found) and move downloaded item to destination path.
-      try? FileManager.default.removeItem(at: item.path)
-      try? FileManager.default.moveItem(at: location, to: item.path)
+      // Size the file that landed. URLSession's counters already include the
+      // resume offset, so this agrees with them; it is here because the file on
+      // disk is the authority on what was actually written, and the last progress
+      // callback may have been throttled away before completion.
+      let receivedBytes = DownloadManager.fileSize(at: record.path) ?? record.receivedBytes
 
-      item.setStatus(.completed)
-      await store.remove(item)
-      await emitChanged(item)
+      record.setBytes(received: receivedBytes, total: record.totalBytes)
+      record.setStatus(.completed)
+      await store.remove(record)
+      await emitChanged(record)
    }
    
+   /// Places a finished download's temporary file at its destination, creating the
+   /// parent directory and replacing whatever is already there. Static and throwing
+   /// so the failure path can be tested; moveItem() fails rather than replacing, so
+   /// the destination is removed first.
+   static func placeDownloadedFile(from location: URL, to destination: URL) throws {
+      let parentDirectory = destination.deletingLastPathComponent()
+
+      if !FileManager.default.fileExists(atPath: parentDirectory.path) {
+         try FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
+      }
+
+      try? FileManager.default.removeItem(at: destination)
+      try FileManager.default.moveItem(at: location, to: destination)
+   }
+
    /**
     Handler for download errors. Called by DownloadSessionDelegate.
 
@@ -289,14 +412,14 @@ public final class DownloadManager: NSObject {
     */
    func handleError(url: URL, error: Error?) async {
       guard let error = error,
-            let item = await store.findByUrl(url) else { return }
+            let record = await store.findByUrl(url) else { return }
       
       // Cancellation with resume data. For user-invoked pauses, pause() may have
       // already persisted resume data. The atomic mutate ensures only one path wins.
       if let data = (error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
          let savedURL = saveResumeData(data)
          
-         let updated = await mutateItem(path: item.path) { current in
+         let updated = await mutateRecord(path: record.path) { current in
             current.setStatus(.paused)
             if current.resumeDataPath == nil {
                current.setResumeDataPath(savedURL)
@@ -315,8 +438,8 @@ public final class DownloadManager: NSObject {
       }
       
       // Download failed - update status and clean up
-      deleteResumeData(for: item)
-      if let updated = await mutateItem(path: item.path, { $0.setStatus(.canceled) }) {
+      deleteResumeData(for: record)
+      if let updated = await mutateRecord(path: record.path, { $0.setStatus(.canceled) }) {
          await store.remove(updated)
          await emitChanged(updated)
       }
@@ -333,8 +456,77 @@ public final class DownloadManager: NSObject {
       }
    }
 
-   func loadResumeData(for item: DownloadItem) -> Data? {
-      guard let url = item.resumeDataPath else { return nil }
+   private func ensureReconciled() async {
+      await reconcileTask?.value
+   }
+
+   /// Decides what a record left `inProgress` with no task behind it should become.
+   /// Returns nil when the record needs no change.
+   ///
+   /// `start()` and `resume()` both commit `inProgress` to the store before calling
+   /// `task.resume()`. A process death in that window strands the record: `start()`
+   /// requires `idle` and `resume()` requires `paused`, so nothing but `cancel()`
+   /// would clear it. A record with resume data can still be resumed, so it becomes
+   /// `paused` and keeps its byte count; one without restarts from scratch, so it
+   /// becomes `idle` at zero. The total is kept either way — headers established it.
+   static func reconciledRecord(_ record: DownloadRecord, hasLiveTask: Bool) -> DownloadRecord? {
+      guard record.status == .inProgress, !hasLiveTask else { return nil }
+
+      var updated = record
+
+      if record.resumeDataPath == nil {
+         updated.setBytes(received: 0, total: record.totalBytes)
+         updated.setStatus(.idle)
+      } else {
+         updated.setStatus(.paused)
+      }
+
+      return updated
+   }
+
+   /// Reconciles the store against the session's live tasks.
+   ///
+   /// Background-session tasks outlive the process and are restored alongside the
+   /// session, so a record is reverted only when the session reports no task for
+   /// its path — otherwise a download that is genuinely still running would be
+   /// clobbered. Android's reconcileStoreOnInit() needs no such check, because
+   /// WorkManager reruns the worker and it rewrites the status itself.
+   ///
+   /// That live-task check is also why the delegate handlers — handleProgress,
+   /// handleFinished, handleError — do not await ensureReconciled(), and must not
+   /// start doing so: gating them would serialize every progress callback behind
+   /// reconciliation for no benefit. They are already safe against it because
+   ///
+   /// - this reverts only records with no live task, while a callback fires only
+   ///   for a task that exists, so the two act on disjoint records;
+   /// - a new task can only appear via start()/resume(), which do await the gate,
+   ///   so none can be created while this is running; and
+   /// - if a restored task finishes mid-reconcile and handleFinished removes its
+   ///   record, the batched update below cannot resurrect it — DownloadStore's
+   ///   update(_ records:) writes only paths that still exist.
+   private func reconcileStore() async {
+      let livePaths = Set(await session.allTasks.compactMap { $0.taskDescription })
+
+      var reconciled: [DownloadRecord] = []
+
+      for record in await store.list() {
+         guard let updated = DownloadManager.reconciledRecord(
+            record,
+            hasLiveTask: livePaths.contains(record.path.path)
+         ) else {
+            continue
+         }
+
+         reconciled.append(updated)
+         os_log(.info, log: Log.downloadManager, "Reconciled %{public}@ to %{public}@",
+                record.path.lastPathComponent, String(describing: updated.status))
+      }
+
+      await store.update(reconciled)
+   }
+
+   func loadResumeData(for record: DownloadRecord) -> Data? {
+      guard let url = record.resumeDataPath else { return nil }
       return try? Data(contentsOf: url)
    }
    
@@ -345,16 +537,20 @@ public final class DownloadManager: NSObject {
       return url
    }
    
-   func deleteResumeData(for item: DownloadItem) {
-      guard let url = item.resumeDataPath else { return }
+   func deleteResumeData(for record: DownloadRecord) {
+      guard let url = record.resumeDataPath else { return }
       try? FileManager.default.removeItem(at: url)
    }
    
-   private func mutateItem(path: URL, _ body: (inout DownloadItem) -> Void) async -> DownloadItem? {
-      guard var item = await store.findByPath(path) else { return nil }
-      body(&item)
-      await store.update(item, persist: true)
-      return item
+   /// Applies `body` to the stored record at `path` and returns what actually landed,
+   /// or nil when no record has that path. One await, so the read and the write cannot
+   /// be interleaved; see DownloadStore.mutate().
+   private func mutateRecord(
+      path: URL,
+      persist: Bool = true,
+      _ body: @Sendable (inout DownloadRecord) -> Void
+   ) async -> DownloadRecord? {
+      return await store.mutate(path: path, persist: persist, body)
    }
    
    func getDownloadTask(_ path: String) async -> URLSessionDownloadTask? {
@@ -363,7 +559,20 @@ public final class DownloadManager: NSObject {
          .first { $0.taskDescription == path }
    }
 
-   func emitChanged(_ item: DownloadItem) async {
+   /// Emits the public payload derived from `record` and returns it for reuse in
+   /// a `DownloadActionResponse`.
+   @discardableResult
+   func emitChanged(_ record: DownloadRecord) async -> DownloadItem {
+      let item = record.toItem()
       await downloadContinuation.yield(item)
+      return item
+   }
+
+   static func fileSize(at url: URL) -> UInt64? {
+      guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            let size = attributes[.size] as? NSNumber else {
+         return nil
+      }
+      return size.uint64Value
    }
 }
