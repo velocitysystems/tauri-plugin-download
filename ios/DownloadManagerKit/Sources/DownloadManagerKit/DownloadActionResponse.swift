@@ -6,7 +6,7 @@
 import Foundation
 
 /// Response from a download action containing the download item and status information.
-public struct DownloadActionResponse: Codable {
+public struct DownloadActionResponse: Encodable {
    public let download: DownloadItem
    public let expectedStatus: DownloadStatus
    public let isExpectedStatus: Bool

@@ -6,31 +6,31 @@
 import Foundation
 import os.log
 
-/// Thread-safe store for the downloads array.
+/// Thread-safe store for the download records array.
 actor DownloadStore {
-   private var downloads: [DownloadItem]
+   private var downloads: [DownloadRecord]
    private static let savePath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("downloads.json")
 
    init() {
       downloads = DownloadStore.load()
    }
 
-   func list() -> [DownloadItem] { downloads }
+   func list() -> [DownloadRecord] { downloads }
    
-   func findByPath(_ path: URL) -> DownloadItem? {
+   func findByPath(_ path: URL) -> DownloadRecord? {
       downloads.first(where: { $0.path == path })
    }
    
-   func findByUrl(_ url: URL) -> DownloadItem? {
+   func findByUrl(_ url: URL) -> DownloadRecord? {
       downloads.first(where: { $0.url == url })
    }
    
-   func append(_ item: DownloadItem) {
+   func append(_ item: DownloadRecord) {
       downloads.append(item)
       save()
    }
    
-   func update(_ item: DownloadItem, persist: Bool = true) {
+   func update(_ item: DownloadRecord, persist: Bool = true) {
       if let index = downloads.firstIndex(where: { $0.path == item.path }) {
          downloads[index] = item
       }
@@ -39,17 +39,17 @@ actor DownloadStore {
       }
    }
    
-   func remove(_ item: DownloadItem) {
+   func remove(_ item: DownloadRecord) {
       if let index = downloads.firstIndex(where: { $0.path == item.path }) {
          downloads.remove(at: index)
       }
       save()
    }
    
-   private static func load() -> [DownloadItem] {
+   private static func load() -> [DownloadRecord] {
       do {
          let data = try Data(contentsOf: savePath)
-         return try JSONDecoder().decode([DownloadItem].self, from: data)
+         return try JSONDecoder().decode([DownloadRecord].self, from: data)
       } catch {
          os_log(.error, log: Log.downloadStore, "Failed to load download store: %{public}@", error.localizedDescription)
          return []
