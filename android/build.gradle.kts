@@ -22,7 +22,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-if (findProject(":lib") == null) {
+// Match on the project directory as well as the path: a consuming Tauri app may
+// have its own `:lib` module.
+val hasLibModule = findProject(":lib")?.projectDir == file("lib")
+
+if (!hasLibModule) {
     apply(plugin = "org.jetbrains.kotlin.plugin.serialization")
 }
 
@@ -55,7 +59,7 @@ android {
     }
 }
 
-if (findProject(":lib") != null) {
+if (hasLibModule) {
     // Standalone build: depend on :lib as a separate module.
     dependencies {
         implementation(project(":lib"))
@@ -75,7 +79,10 @@ if (findProject(":lib") != null) {
 
 dependencies {
     implementation(project(":tauri-android"))
-    if (findProject(":lib") != null) {
+    if (hasLibModule) {
+        // `:lib` scopes these as `implementation`, so they do not reach this
+        // module's compile classpath, but `DownloadPlugin.kt` imports them
+        // directly. Its other `:lib` dependencies need no entry here.
         implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     }
