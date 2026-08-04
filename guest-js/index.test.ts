@@ -175,8 +175,20 @@ describe('download actions', () => {
       expect(lastCmd).toBe('plugin:download|create');
       expect(lastArgs.path).toBe('/tmp/unknown.zip');
       expect(lastArgs.url).toBe('https://example.com/file.zip');
+      expect(lastArgs.options).toBeUndefined();
       expect(response.isExpectedStatus).toBe(true);
       expect(response.download.status).toBe(DownloadStatus.Idle);
+   });
+
+   it('create — forwards network policy options', async () => {
+      const pending = await get('/tmp/unknown.zip');
+
+      if (!hasAction(pending, DownloadAction.Create)) {
+         throw new Error('expected create action');
+      }
+      await pending.create('https://example.com/file.zip', { allowMetered: false });
+
+      expect(lastArgs.options).toEqual({ allowMetered: false });
    });
 
    it('start — sends path, returns InProgress download', async () => {

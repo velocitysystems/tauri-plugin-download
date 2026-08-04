@@ -186,6 +186,29 @@ async function manageDownload() {
 }
 ```
 
+On desktop, a download can be restricted to unmetered, unconstrained networks when it
+is created:
+
+```ts
+const download = await get('/path/to/large-file.zip');
+
+if (download.status === DownloadStatus.Pending) {
+   const { download: created } = await download.create(
+      'https://example.com/large-file.zip',
+      { allowMetered: false }
+   );
+
+   await created.start();
+}
+```
+
+`allowMetered` defaults to `true`. When it is `false`, both `start()` and `resume()`
+reject if there is no active connection, connectivity cannot be determined, or the
+current connection is reported as metered or constrained. The stored download remains
+idle or paused so the action can be retried later. A connection change does not stop a
+download that is already in progress. Android and iOS currently accept this option but
+do not enforce it.
+
 #### Listen for progress notifications
 
 Listeners can be attached to downloads in any status, including `Pending`.

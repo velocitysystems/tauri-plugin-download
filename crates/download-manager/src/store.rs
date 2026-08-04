@@ -155,6 +155,7 @@ mod tests {
       DownloadRecord {
          url: "https://example.com/file.mp4".to_string(),
          path: path.to_string(),
+         options: Default::default(),
          received_bytes: 0,
          total_bytes: None,
          status: DownloadStatus::Idle,
@@ -201,6 +202,20 @@ mod tests {
       let (store, dir) = temp_store();
       store.create(sample_record("/tmp/file.mp4")).unwrap();
       assert!(dir.path().join("downloads.json").exists());
+   }
+
+   #[test]
+   fn test_create_options_persist_across_reload() {
+      let (store, dir) = temp_store();
+      let mut item = sample_record("/tmp/file.mp4");
+      item.options.allow_metered = false;
+      store.create(item).unwrap();
+
+      let reloaded = DownloadStore::new(dir.path().join("downloads.json"));
+      reloaded.load().unwrap();
+
+      let found = reloaded.find_by_path("/tmp/file.mp4").unwrap().unwrap();
+      assert!(!found.options.allow_metered);
    }
 
    #[test]

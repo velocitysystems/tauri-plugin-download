@@ -78,6 +78,18 @@ export interface ListenOptions {
    autoUnlisten?: boolean;
 }
 
+/** Options applied when a download is created. */
+export interface CreateOptions {
+
+   /**
+    * Whether the download may start or resume on metered or constrained
+    * connections. Defaults to `true`.
+    *
+    * This option is currently enforced on desktop only.
+    */
+   allowMetered?: boolean;
+}
+
 export interface AllDownloadActions {
 
    /**
@@ -108,7 +120,10 @@ export interface AllDownloadActions {
     * ```
     */
    [DownloadAction.Listen]: (listener: (download: DownloadWithAnyStatus) => void, options?: ListenOptions) => Promise<UnlistenFn>;
-   [DownloadAction.Create]: (url: string) => Promise<DownloadActionResponse<DownloadAction.Create>>;
+   [DownloadAction.Create]: (
+      url: string,
+      options?: CreateOptions
+   ) => Promise<DownloadActionResponse<DownloadAction.Create>>;
    [DownloadAction.Start]: () => Promise<DownloadActionResponse<DownloadAction.Start>>;
    [DownloadAction.Resume]: () => Promise<DownloadActionResponse<DownloadAction.Resume>>;
    [DownloadAction.Pause]: () => Promise<DownloadActionResponse<DownloadAction.Pause>>;

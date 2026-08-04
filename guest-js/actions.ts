@@ -2,7 +2,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { addPluginListener, invoke } from '@tauri-apps/api/core';
 import {
    AllDownloadActions, allowedActions, Download, DownloadAction, DownloadActionResponse, DownloadState,
-   DownloadStatus, DownloadWithAnyStatus, isTerminal, ListenOptions,
+   DownloadStatus, DownloadWithAnyStatus, isTerminal, ListenOptions, CreateOptions,
 } from './types';
 
 export const DOWNLOAD_EVENT_NAME = 'tauri-plugin-download:changed';
@@ -167,8 +167,14 @@ const actions = {
       return unlisten;
    },
 
-   async create(url: string) {
-      return sendAction(DownloadAction.Create, { path: this.path, url });
+   async create(url: string, options?: CreateOptions) {
+      const args: Record<string, unknown> = { path: this.path, url };
+
+      if (options) {
+         args.options = options;
+      }
+
+      return sendAction(DownloadAction.Create, args);
    },
 
    async start() {

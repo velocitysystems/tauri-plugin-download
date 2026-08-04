@@ -12,6 +12,7 @@ use crate::store::DownloadStore;
 use crate::validate;
 
 type HttpClient = reqwest_middleware::ClientWithMiddleware;
+type ConnectionStatusProvider = fn() -> connectivity::Result<connectivity::ConnectionStatus>;
 
 pub(crate) static DOWNLOAD_SUFFIX: &str = ".download";
 
@@ -24,6 +25,7 @@ pub struct DownloadManager {
    pub(crate) http_client: HttpClient,
    pub(crate) store: DownloadStore,
    pub(crate) on_changed: OnChanged,
+   connection_status: ConnectionStatusProvider,
 }
 
 impl DownloadManager {
@@ -33,6 +35,14 @@ impl DownloadManager {
    /// - `data_dir` - Directory where `downloads.json` will be stored.
    /// - `on_changed` - Callback invoked on every state/progress change.
    pub fn new(data_dir: PathBuf, on_changed: OnChanged) -> Self {
+      Self::with_connection_status_provider(data_dir, on_changed, connectivity::connection_status)
+   }
+
+   fn with_connection_status_provider(
+      data_dir: PathBuf,
+      on_changed: OnChanged,
+      connection_status: ConnectionStatusProvider,
+   ) -> Self {
       let store = DownloadStore::new(data_dir.join("downloads.json"));
       if let Err(e) = store.load() {
          warn!("Failed to load download store: {}", e);
@@ -46,6 +56,7 @@ impl DownloadManager {
          http_client,
          store,
          on_changed,
+         connection_status,
       }
    }
 
@@ -111,6 +122,7 @@ impl DownloadManager {
          None => Ok(DownloadRecord {
             url: String::new(),
             path: path.to_string(),
+            options: CreateOptions::default(),
             received_bytes: 0,
             total_bytes: None,
             status: DownloadStatus::Pending,
@@ -129,6 +141,23 @@ impl DownloadManager {
    /// # Returns
    /// The download operation.
    pub fn create(&self, path: &str, url: &str) -> crate::Result<DownloadActionResponse> {
+      self.create_with_options(path, url, CreateOptions::default())
+   }
+
+   /// Creates a download operation with network policy options.
+   ///
+   /// Existing records are returned unchanged, including their original options.
+   ///
+   /// # Arguments
+   /// - `path` - The download path.
+   /// - `url` - The download URL for the resource.
+   /// - `options` - Network policy persisted with the download.
+   pub fn create_with_options(
+      &self,
+      path: &str,
+      url: &str,
+      options: CreateOptions,
+   ) -> crate::Result<DownloadActionResponse> {
       validate::path(path)?;
       validate::url(url)?;
 
@@ -143,6 +172,7 @@ impl DownloadManager {
       let item = self.store.create(DownloadRecord {
          url: url.to_string(),
          path: path.to_string(),
+         options,
          received_bytes: 0,
          total_bytes: None,
          status: DownloadStatus::Idle,
@@ -169,7 +199,10 @@ impl DownloadManager {
          .ok_or_else(|| Error::NotFound(path.to_string()))?;
       match item.status {
          // Allow download to be started when idle.
-         DownloadStatus::Idle => self.spawn_download(item, "failed to start"),
+         DownloadStatus::Idle => {
+            self.ensure_network_allowed(&item)?;
+            self.spawn_download(item, "failed to start")
+         }
 
          // Return current state if in any other state.
          _ => Ok(DownloadActionResponse::with_expected_status(
@@ -196,7 +229,10 @@ impl DownloadManager {
          .ok_or_else(|| Error::NotFound(path.to_string()))?;
       match item.status {
          // Allow download to be resumed when paused.
-         DownloadStatus::Paused => self.spawn_download(item, "failed to resume"),
+         DownloadStatus::Paused => {
+            self.ensure_network_allowed(&item)?;
+            self.spawn_download(item, "failed to resume")
+         }
 
          // Return current state if in any other state.
          _ => Ok(DownloadActionResponse::with_expected_status(
@@ -237,6 +273,23 @@ impl DownloadManager {
       });
 
       Ok(DownloadActionResponse::new(public_item))
+   }
+
+   fn ensure_network_allowed(&self, item: &DownloadRecord) -> crate::Result<()> {
+      if item.options.allow_metered {
+         return Ok(());
+      }
+
+      let status = (self.connection_status)()?;
+
+      if !status.connected {
+         return Err(Error::NetworkUnavailable);
+      }
+      if status.metered || status.constrained {
+         return Err(Error::NetworkRestricted);
+      }
+
+      Ok(())
    }
 
    ///
@@ -350,22 +403,47 @@ fn filename(path: &str) -> &str {
 #[cfg(test)]
 mod tests {
    use super::*;
+   use connectivity::{ConnectionStatus, ConnectionType};
    use std::sync::Mutex;
    use tempfile::TempDir;
 
    const VALID_URL: &str = "https://example.com/file.mp4";
+   const LOCAL_URL: &str = "http://127.0.0.1:9/file.mp4";
 
    type EventLog = Arc<Mutex<Vec<DownloadItem>>>;
 
    fn make_manager() -> (DownloadManager, TempDir, EventLog) {
+      make_manager_with_provider(|| Ok(ConnectionStatus::disconnected()))
+   }
+
+   fn make_manager_with_provider(
+      connection_status: ConnectionStatusProvider,
+   ) -> (DownloadManager, TempDir, EventLog) {
       let dir = TempDir::new().unwrap();
       let events: EventLog = Arc::new(Mutex::new(Vec::new()));
       let captured = events.clone();
       let on_changed: OnChanged = Arc::new(move |event| {
          captured.lock().unwrap().push(event);
       });
-      let manager = DownloadManager::new(dir.path().to_path_buf(), on_changed);
+      let manager = DownloadManager::with_connection_status_provider(
+         dir.path().to_path_buf(),
+         on_changed,
+         connection_status,
+      );
       (manager, dir, events)
+   }
+
+   fn connected_status(metered: bool, constrained: bool) -> ConnectionStatus {
+      ConnectionStatus {
+         connected: true,
+         metered,
+         constrained,
+         connection_type: ConnectionType::Wifi,
+      }
+   }
+
+   fn unexpected_connectivity_check() -> connectivity::Result<ConnectionStatus> {
+      panic!("connectivity should not be checked")
    }
 
    fn event_log(events: &EventLog) -> Vec<DownloadItem> {
@@ -377,11 +455,21 @@ mod tests {
    }
 
    fn seed(manager: &DownloadManager, path: &str, status: DownloadStatus) {
+      seed_with_options(manager, path, status, CreateOptions::default());
+   }
+
+   fn seed_with_options(
+      manager: &DownloadManager,
+      path: &str,
+      status: DownloadStatus,
+      options: CreateOptions,
+   ) {
       manager
          .store
          .create(DownloadRecord {
             url: VALID_URL.to_string(),
             path: path.to_string(),
+            options,
             received_bytes: 0,
             total_bytes: None,
             status,
@@ -433,6 +521,7 @@ mod tests {
          .unwrap();
       assert_eq!(stored.status, DownloadStatus::Idle);
       assert_eq!(stored.url, VALID_URL);
+      assert!(stored.options.allow_metered);
 
       let log = event_log(&events);
       assert_eq!(log.len(), 1);
@@ -458,6 +547,42 @@ mod tests {
 
       // Only the first create emitted a change event.
       assert_eq!(event_log(&events).len(), 1);
+   }
+
+   #[test]
+   fn test_create_with_options_persists_network_policy() {
+      let (manager, _dir, _events) = make_manager();
+      let options = CreateOptions {
+         allow_metered: false,
+      };
+
+      manager
+         .create_with_options("/tmp/file.mp4", VALID_URL, options)
+         .unwrap();
+
+      let stored = manager
+         .store
+         .find_by_path("/tmp/file.mp4")
+         .unwrap()
+         .unwrap();
+      assert_eq!(stored.options, options);
+   }
+
+   #[test]
+   fn test_create_existing_does_not_overwrite_options() {
+      let (manager, _dir, _events) = make_manager();
+      let path = "/tmp/file.mp4";
+      let restricted = CreateOptions {
+         allow_metered: false,
+      };
+      manager
+         .create_with_options(path, VALID_URL, restricted)
+         .unwrap();
+
+      manager.create(path, VALID_URL).unwrap();
+
+      let stored = manager.store.find_by_path(path).unwrap().unwrap();
+      assert_eq!(stored.options, restricted);
    }
 
    #[test]
@@ -504,6 +629,146 @@ mod tests {
       assert_eq!(stored.status, DownloadStatus::InProgress);
    }
 
+   #[tokio::test]
+   async fn test_start_unrestricted_skips_connectivity_check() {
+      let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      manager.create("/tmp/file.mp4", LOCAL_URL).unwrap();
+
+      let response = manager.start("/tmp/file.mp4").unwrap();
+
+      assert_eq!(response.download.status, DownloadStatus::InProgress);
+   }
+
+   #[tokio::test]
+   async fn test_start_restricted_allows_unmetered_connection() {
+      let (manager, _dir, _events) =
+         make_manager_with_provider(|| Ok(connected_status(false, false)));
+      manager
+         .create_with_options(
+            "/tmp/file.mp4",
+            LOCAL_URL,
+            CreateOptions {
+               allow_metered: false,
+            },
+         )
+         .unwrap();
+
+      let response = manager.start("/tmp/file.mp4").unwrap();
+
+      assert_eq!(response.download.status, DownloadStatus::InProgress);
+   }
+
+   #[test]
+   fn test_start_restricted_rejects_metered_connection_without_state_change() {
+      let (manager, _dir, events) =
+         make_manager_with_provider(|| Ok(connected_status(true, false)));
+      let path = "/tmp/file.mp4";
+      manager
+         .create_with_options(
+            path,
+            VALID_URL,
+            CreateOptions {
+               allow_metered: false,
+            },
+         )
+         .unwrap();
+      clear_events(&events);
+
+      assert!(matches!(manager.start(path), Err(Error::NetworkRestricted)));
+      assert_eq!(
+         manager.store.find_by_path(path).unwrap().unwrap().status,
+         DownloadStatus::Idle
+      );
+      assert!(event_log(&events).is_empty());
+   }
+
+   #[test]
+   fn test_start_restricted_rejects_constrained_connection() {
+      let (manager, _dir, _events) =
+         make_manager_with_provider(|| Ok(connected_status(false, true)));
+      let path = "/tmp/file.mp4";
+      manager
+         .create_with_options(
+            path,
+            VALID_URL,
+            CreateOptions {
+               allow_metered: false,
+            },
+         )
+         .unwrap();
+
+      assert!(matches!(manager.start(path), Err(Error::NetworkRestricted)));
+      assert_eq!(
+         manager.store.find_by_path(path).unwrap().unwrap().status,
+         DownloadStatus::Idle
+      );
+   }
+
+   #[test]
+   fn test_start_restricted_rejects_disconnected_network() {
+      let (manager, _dir, _events) = make_manager();
+      let path = "/tmp/file.mp4";
+      manager
+         .create_with_options(
+            path,
+            VALID_URL,
+            CreateOptions {
+               allow_metered: false,
+            },
+         )
+         .unwrap();
+
+      assert!(matches!(
+         manager.start(path),
+         Err(Error::NetworkUnavailable)
+      ));
+      assert_eq!(
+         manager.store.find_by_path(path).unwrap().unwrap().status,
+         DownloadStatus::Idle
+      );
+   }
+
+   #[test]
+   fn test_start_restricted_propagates_connectivity_error() {
+      let (manager, _dir, _events) = make_manager_with_provider(|| {
+         Err(connectivity::Error::DetectionFailed {
+            message: "backend unavailable".to_string(),
+            code: None,
+         })
+      });
+      let path = "/tmp/file.mp4";
+      manager
+         .create_with_options(
+            path,
+            VALID_URL,
+            CreateOptions {
+               allow_metered: false,
+            },
+         )
+         .unwrap();
+
+      assert!(matches!(manager.start(path), Err(Error::Connectivity(_))));
+      assert_eq!(
+         manager.store.find_by_path(path).unwrap().unwrap().status,
+         DownloadStatus::Idle
+      );
+   }
+
+   #[test]
+   fn test_start_from_non_idle_skips_connectivity_check() {
+      let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      seed_with_options(
+         &manager,
+         "/tmp/file.mp4",
+         DownloadStatus::InProgress,
+         CreateOptions {
+            allow_metered: false,
+         },
+      );
+
+      manager.start("/tmp/file.mp4").unwrap();
+   }
+
    // ---------- resume ----------
 
    #[test]
@@ -534,6 +799,31 @@ mod tests {
 
       let stored = manager.store.find_by_path(path).unwrap().unwrap();
       assert_eq!(stored.status, DownloadStatus::Idle);
+   }
+
+   #[test]
+   fn test_resume_restricted_rejects_metered_connection_without_state_change() {
+      let (manager, _dir, events) =
+         make_manager_with_provider(|| Ok(connected_status(true, false)));
+      let path = "/tmp/file.mp4";
+      seed_with_options(
+         &manager,
+         path,
+         DownloadStatus::Paused,
+         CreateOptions {
+            allow_metered: false,
+         },
+      );
+
+      assert!(matches!(
+         manager.resume(path),
+         Err(Error::NetworkRestricted)
+      ));
+      assert_eq!(
+         manager.store.find_by_path(path).unwrap().unwrap().status,
+         DownloadStatus::Paused
+      );
+      assert!(event_log(&events).is_empty());
    }
 
    // ---------- pause ----------

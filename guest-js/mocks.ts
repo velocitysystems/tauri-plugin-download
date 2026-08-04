@@ -253,6 +253,8 @@ export function clearDownloadMocks(): void {
  *
  * This helper approximates backend/native state transitions for common test flows.
  * It is not a backend contract and does not transition downloads to `Completed`.
+ * Create options are recorded in invocation history, but network-policy enforcement
+ * is not simulated.
  * It only simulates the desktop event path and always returns `false` for `is_native`,
  * so tests that need the native/mobile listener branch require a separate approach.
  * Use `emitChange()` or `setDownload()` to simulate progress updates or terminal states.

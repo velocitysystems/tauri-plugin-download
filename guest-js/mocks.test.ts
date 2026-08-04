@@ -113,10 +113,11 @@ describe('mockDownloadPlugin', () => {
          throw new Error('expected create action');
       }
 
-      const response = await download.create('https://example.com/new.zip');
+      const response = await download.create('https://example.com/new.zip', { allowMetered: false });
 
       expect(response.isExpectedStatus).toBe(true);
       expect(response.download.status).toBe(DownloadStatus.Idle);
+      expect(controller.getLastInvocation()?.args.options).toEqual({ allowMetered: false });
       expect(controller.getDownload('/tmp/new.zip')).toEqual({
          url: 'https://example.com/new.zip',
          path: '/tmp/new.zip',

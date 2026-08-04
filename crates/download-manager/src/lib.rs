@@ -7,4 +7,4 @@ mod validate;
 
 pub use error::{Error, Result};
 pub use manager::{DownloadManager, OnChanged};
-pub use models::{DownloadActionResponse, DownloadItem, DownloadStatus};
+pub use models::{CreateOptions, DownloadActionResponse, DownloadItem, DownloadStatus};

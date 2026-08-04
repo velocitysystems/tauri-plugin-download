@@ -12,6 +12,8 @@ mod commands;
 mod error;
 mod models;
 
+pub use models::CreateOptions;
+
 use error::Result;
 
 #[cfg(desktop)]

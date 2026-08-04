@@ -1,6 +1,27 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Options that control when a download is allowed to use the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateOptions {
+   /// Whether the download may start on metered or constrained connections.
+   #[serde(default = "default_allow_metered")]
+   pub allow_metered: bool,
+}
+
+impl Default for CreateOptions {
+   fn default() -> Self {
+      Self {
+         allow_metered: true,
+      }
+   }
+}
+
+const fn default_allow_metered() -> bool {
+   true
+}
+
 /// Persisted download record. Stored in `downloads.json`.
 ///
 /// Does not contain `progress` — that is a derived value only present in
@@ -10,6 +31,8 @@ use std::fmt;
 pub(crate) struct DownloadRecord {
    pub url: String,
    pub path: String,
+   #[serde(default)]
+   pub options: CreateOptions,
    #[serde(default)]
    pub received_bytes: u64,
    #[serde(default)]
@@ -136,6 +159,7 @@ mod tests {
       DownloadRecord {
          url: "http://example.com/file.mp4".to_string(),
          path: "/tmp/file.mp4".to_string(),
+         options: CreateOptions::default(),
          received_bytes: 0,
          total_bytes: None,
          status: DownloadStatus::Idle,
@@ -230,6 +254,29 @@ mod tests {
       let record: DownloadRecord = serde_json::from_str(json).unwrap();
       assert_eq!(record.received_bytes, 0);
       assert_eq!(record.total_bytes, None);
+      assert!(record.options.allow_metered);
+   }
+
+   #[test]
+   fn test_create_options_default_allows_metered_connections() {
+      assert!(CreateOptions::default().allow_metered);
+
+      let options: CreateOptions = serde_json::from_str("{}").unwrap();
+      assert!(options.allow_metered);
+   }
+
+   #[test]
+   fn test_create_options_round_trip_restriction() {
+      let options = CreateOptions {
+         allow_metered: false,
+      };
+      let json = serde_json::to_string(&options).unwrap();
+
+      assert_eq!(json, r#"{"allowMetered":false}"#);
+      assert_eq!(
+         serde_json::from_str::<CreateOptions>(&json).unwrap(),
+         options
+      );
    }
 
    #[test]

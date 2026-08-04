@@ -19,8 +19,18 @@ pub(crate) async fn create<R: Runtime>(
    app: AppHandle<R>,
    path: String,
    url: String,
+   options: Option<CreateOptions>,
 ) -> Result<DownloadActionResponse> {
-   app.download().create(&path, &url)
+   #[cfg(desktop)]
+   {
+      app.download()
+         .create_with_options(&path, &url, options.unwrap_or_default())
+   }
+   #[cfg(mobile)]
+   {
+      let _ = options;
+      app.download().create(&path, &url)
+   }
 }
 
 #[command]
