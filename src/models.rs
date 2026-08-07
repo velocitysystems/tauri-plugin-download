@@ -7,7 +7,7 @@ pub use download_manager::{CreateOptions, DownloadActionResponse, DownloadItem};
 mod mobile_types {
    use serde::{Deserialize, Serialize};
 
-   #[derive(Debug, Clone, Copy, Deserialize)]
+   #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
    #[serde(rename_all = "camelCase")]
    pub struct CreateOptions {
       #[serde(default = "default_allow_metered")]
