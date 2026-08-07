@@ -499,10 +499,20 @@ mod tests {
       status: DownloadStatus,
       options: CreateOptions,
    ) {
+      seed_with_url_and_options(manager, path, VALID_URL, status, options);
+   }
+
+   fn seed_with_url_and_options(
+      manager: &DownloadManager,
+      path: &str,
+      url: &str,
+      status: DownloadStatus,
+      options: CreateOptions,
+   ) {
       manager
          .store
          .create(DownloadRecord {
-            url: VALID_URL.to_string(),
+            url: url.to_string(),
             path: path.to_string(),
             options,
             received_bytes: 0,
@@ -851,6 +861,49 @@ mod tests {
 
       let stored = manager.store.find_by_path(path).unwrap().unwrap();
       assert_eq!(stored.status, DownloadStatus::Idle);
+   }
+
+   #[tokio::test]
+   async fn test_resume_unrestricted_skips_connectivity_check() {
+      let (manager, dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      let (server, path, url) = make_mock_download(&dir).await;
+      seed_with_url_and_options(
+         &manager,
+         &path,
+         &url,
+         DownloadStatus::Paused,
+         CreateOptions::default(),
+      );
+
+      let response = manager.resume(&path).await.unwrap();
+
+      assert_eq!(response.download.status, DownloadStatus::InProgress);
+      wait_for_download(&manager, &path).await;
+      assert_eq!(fs::read(&path).unwrap(), MOCK_BODY);
+      server.verify().await;
+   }
+
+   #[tokio::test]
+   async fn test_resume_restricted_allows_unmetered_connection() {
+      let (manager, dir, _events) =
+         make_manager_with_provider(|| Ok(connected_status(false, false)));
+      let (server, path, url) = make_mock_download(&dir).await;
+      seed_with_url_and_options(
+         &manager,
+         &path,
+         &url,
+         DownloadStatus::Paused,
+         CreateOptions {
+            allow_metered: false,
+         },
+      );
+
+      let response = manager.resume(&path).await.unwrap();
+
+      assert_eq!(response.download.status, DownloadStatus::InProgress);
+      wait_for_download(&manager, &path).await;
+      assert_eq!(fs::read(&path).unwrap(), MOCK_BODY);
+      server.verify().await;
    }
 
    #[tokio::test]
