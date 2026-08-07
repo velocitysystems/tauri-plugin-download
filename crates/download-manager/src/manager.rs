@@ -410,10 +410,13 @@ mod tests {
    use super::*;
    use connectivity::{ConnectionStatus, ConnectionType};
    use std::sync::Mutex;
+   use std::time::Duration;
    use tempfile::TempDir;
+   use wiremock::matchers::{method, path as wm_path};
+   use wiremock::{Mock, MockServer, ResponseTemplate};
 
    const VALID_URL: &str = "https://example.com/file.mp4";
-   const LOCAL_URL: &str = "http://127.0.0.1:9/file.mp4";
+   const MOCK_BODY: &[u8] = b"manager test download";
 
    type EventLog = Arc<Mutex<Vec<DownloadItem>>>;
 
@@ -449,6 +452,33 @@ mod tests {
 
    fn unexpected_connectivity_check() -> connectivity::Result<ConnectionStatus> {
       panic!("connectivity should not be checked")
+   }
+
+   async fn make_mock_download(dir: &TempDir) -> (MockServer, String, String) {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+         .and(wm_path("/file.mp4"))
+         .respond_with(ResponseTemplate::new(200).set_body_bytes(MOCK_BODY.to_vec()))
+         .expect(1)
+         .mount(&server)
+         .await;
+
+      let path = dir.path().join("file.mp4").to_string_lossy().into_owned();
+      let url = format!("{}/file.mp4", server.uri());
+      (server, path, url)
+   }
+
+   async fn wait_for_download(manager: &DownloadManager, path: &str) {
+      tokio::time::timeout(Duration::from_secs(5), async {
+         loop {
+            if manager.store.find_by_path(path).unwrap().is_none() {
+               break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+         }
+      })
+      .await
+      .expect("mock download did not complete");
    }
 
    fn event_log(events: &EventLog) -> Vec<DownloadItem> {
@@ -636,31 +666,39 @@ mod tests {
 
    #[tokio::test]
    async fn test_start_unrestricted_skips_connectivity_check() {
-      let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
-      manager.create("/tmp/file.mp4", LOCAL_URL).unwrap();
+      let (manager, dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      let (server, path, url) = make_mock_download(&dir).await;
+      manager.create(&path, &url).unwrap();
 
-      let response = manager.start("/tmp/file.mp4").await.unwrap();
+      let response = manager.start(&path).await.unwrap();
 
       assert_eq!(response.download.status, DownloadStatus::InProgress);
+      wait_for_download(&manager, &path).await;
+      assert_eq!(fs::read(&path).unwrap(), MOCK_BODY);
+      server.verify().await;
    }
 
    #[tokio::test]
    async fn test_start_restricted_allows_unmetered_connection() {
-      let (manager, _dir, _events) =
+      let (manager, dir, _events) =
          make_manager_with_provider(|| Ok(connected_status(false, false)));
+      let (server, path, url) = make_mock_download(&dir).await;
       manager
          .create_with_options(
-            "/tmp/file.mp4",
-            LOCAL_URL,
+            &path,
+            &url,
             CreateOptions {
                allow_metered: false,
             },
          )
          .unwrap();
 
-      let response = manager.start("/tmp/file.mp4").await.unwrap();
+      let response = manager.start(&path).await.unwrap();
 
       assert_eq!(response.download.status, DownloadStatus::InProgress);
+      wait_for_download(&manager, &path).await;
+      assert_eq!(fs::read(&path).unwrap(), MOCK_BODY);
+      server.verify().await;
    }
 
    #[tokio::test]
