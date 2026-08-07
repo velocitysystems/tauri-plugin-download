@@ -7,6 +7,7 @@ pub use download_manager::{CreateOptions, DownloadActionResponse, DownloadItem};
 mod mobile_types {
    use serde::{Deserialize, Serialize};
 
+   /// Options fixed when a download is created.
    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
    #[serde(rename_all = "camelCase")]
    pub struct CreateOptions {
@@ -44,6 +45,8 @@ mod mobile_types {
    pub struct DownloadItem {
       pub url: String,
       pub path: String,
+      #[serde(default)]
+      pub options: CreateOptions,
       #[serde(default)]
       pub received_bytes: u64,
       #[serde(default)]

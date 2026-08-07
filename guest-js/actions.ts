@@ -203,6 +203,7 @@ export function attachDownload<S extends DownloadStatus>(state: DownloadState<S>
    const download = {
       url: state.url,
       path: state.path,
+      options: { ...state.options },
       receivedBytes: state.receivedBytes ?? 0,
       totalBytes: state.totalBytes ?? null,
       progress: state.progress ?? 0,

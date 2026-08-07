@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Options that control when a download is allowed to use the network.
+///
+/// Options are fixed when the download is created and remain unchanged for the
+/// lifetime of its persisted record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateOptions {
@@ -47,6 +50,8 @@ pub(crate) struct DownloadRecord {
 pub struct DownloadItem {
    pub url: String,
    pub path: String,
+   /// Network policy fixed when the download was created.
+   pub options: CreateOptions,
    pub received_bytes: u64,
    pub total_bytes: Option<u64>,
    pub progress: f64,
@@ -128,6 +133,7 @@ impl DownloadRecord {
       DownloadItem {
          url: self.url.clone(),
          path: self.path.clone(),
+         options: self.options,
          received_bytes: self.received_bytes,
          total_bytes: self.total_bytes,
          progress,
@@ -210,12 +216,18 @@ mod tests {
    #[test]
    fn test_to_item_with_known_size() {
       let mut record = sample_record();
+      record.options.allow_metered = false;
       record.received_bytes = 500;
       record.total_bytes = Some(1000);
       let item = record.to_item();
+      assert!(!item.options.allow_metered);
       assert_eq!(item.progress, 50.0);
       assert_eq!(item.received_bytes, 500);
       assert_eq!(item.total_bytes, Some(1000));
+      assert_eq!(
+         serde_json::to_value(&item).unwrap()["options"]["allowMetered"],
+         false
+      );
    }
 
    #[test]

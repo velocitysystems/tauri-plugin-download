@@ -4,6 +4,7 @@ import { DOWNLOAD_EVENT_NAME, resetDownloadEventManager } from './actions';
 import {
    DownloadAction,
    type DownloadActionResponse,
+   type CreateOptions,
    type DownloadState,
    DownloadStatus,
    expectedStatusesForAction,
@@ -108,7 +109,10 @@ type MockActionResponse<A extends DownloadAction> = Omit<DownloadActionResponse<
 const DEFAULT_URL = 'https://example.com/file.zip';
 
 function cloneDownload<S extends DownloadStatus>(download: DownloadState<S>): DownloadState<S> {
-   return { ...download };
+   return {
+      ...download,
+      options: { ...download.options },
+   };
 }
 
 function cloneDownloads(downloadsByPath: Map<string, DownloadState<DownloadStatus>>): DownloadState<DownloadStatus>[] {
@@ -121,6 +125,7 @@ function createPendingDownload(path: string): DownloadState<DownloadStatus.Pendi
    return {
       url: '',
       path,
+      options: { allowMetered: true },
       receivedBytes: 0,
       totalBytes: null,
       progress: 0,
@@ -189,6 +194,14 @@ function getUrlArg(args: Record<string, unknown>): string {
    return String(args.url ?? DEFAULT_URL);
 }
 
+function getCreateOptionsArg(args: Record<string, unknown>): Required<CreateOptions> {
+   const options = args.options as CreateOptions | undefined;
+
+   return {
+      allowMetered: options?.allowMetered ?? true,
+   };
+}
+
 function createTransitionDownload(
    currentDownload: DownloadState<DownloadStatus>,
    nextStatus: DownloadStatus,
@@ -233,6 +246,9 @@ export function createMockDownloadState(
    return {
       url: overrides.url ?? DEFAULT_URL,
       path: overrides.path ?? '/tmp/file.zip',
+      options: {
+         allowMetered: overrides.options?.allowMetered ?? true,
+      },
       receivedBytes,
       totalBytes,
       progress: computedProgress,
@@ -253,7 +269,7 @@ export function clearDownloadMocks(): void {
  *
  * This helper approximates backend/native state transitions for common test flows.
  * It is not a backend contract and does not transition downloads to `Completed`.
- * Create options are recorded in invocation history, but network-policy enforcement
+ * Create options are persisted with mocked downloads, but network-policy enforcement
  * is not simulated.
  * It only simulates the desktop event path and always returns `false` for `is_native`,
  * so tests that need the native/mobile listener branch require a separate approach.
@@ -291,6 +307,7 @@ export function mockDownloadPlugin(
             const createdDownload = {
                ...currentDownload,
                url: getUrlArg(args),
+               options: getCreateOptionsArg(args),
                status: DownloadStatus.Idle,
             };
 

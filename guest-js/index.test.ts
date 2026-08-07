@@ -30,6 +30,7 @@ let lastCmd = '',
 const IDLE_STATE = {
    url: 'https://example.com/file.zip',
    path: '/tmp/file.zip',
+   options: { allowMetered: true },
    receivedBytes: 0,
    totalBytes: null,
    progress: 0,
@@ -39,6 +40,7 @@ const IDLE_STATE = {
 const IN_PROGRESS_STATE = {
    url: 'https://example.com/file.zip',
    path: '/tmp/file.zip',
+   options: { allowMetered: true },
    receivedBytes: 42,
    totalBytes: 100,
    progress: 42,
@@ -48,6 +50,7 @@ const IN_PROGRESS_STATE = {
 const PAUSED_STATE = {
    url: 'https://example.com/file.zip',
    path: '/tmp/file.zip',
+   options: { allowMetered: true },
    receivedBytes: 42,
    totalBytes: 100,
    progress: 42,
@@ -77,6 +80,7 @@ beforeEach(() => {
          return {
             url: '',
             path,
+            options: { allowMetered: true },
             receivedBytes: 0,
             totalBytes: null,
             progress: 0,
@@ -263,6 +267,7 @@ describe('state machine — action availability', () => {
       const download = attachDownload({
          url: '',
          path: '/tmp/file.zip',
+         options: { allowMetered: true },
          receivedBytes: 0,
          totalBytes: null,
          progress: 0,
@@ -352,6 +357,7 @@ describe('state machine — action availability', () => {
 
       expect(download.url).toBe('https://example.com/file.zip');
       expect(download.path).toBe('/tmp/file.zip');
+      expect(download.options).toEqual({ allowMetered: true });
       expect(download.receivedBytes).toBe(42);
       expect(download.totalBytes).toBe(100);
       expect(download.progress).toBe(42);

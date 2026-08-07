@@ -51,6 +51,9 @@ export enum DownloadAction {
 export interface DownloadState<S extends DownloadStatus> {
    url: string;
    path: string;
+
+   /** Network policy fixed when this download was created. */
+   readonly options: Readonly<Required<CreateOptions>>;
    receivedBytes: number;
    totalBytes: number | null;
    progress: number;
@@ -78,13 +81,19 @@ export interface ListenOptions {
    autoUnlisten?: boolean;
 }
 
-/** Options applied when a download is created. */
+/**
+ * Options applied when a download is first created.
+ *
+ * An existing download keeps its original options when `create()` is called
+ * again for the same path.
+ */
 export interface CreateOptions {
 
    /**
     * Whether the download may start or resume on metered or constrained
     * connections. Defaults to `true`.
     *
+    * The resolved value is exposed through `download.options.allowMetered`.
     * This option is currently enforced on desktop only.
     */
    allowMetered?: boolean;

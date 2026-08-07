@@ -147,6 +147,8 @@ impl DownloadManager {
    /// Creates a download operation with network policy options.
    ///
    /// Existing records are returned unchanged, including their original options.
+   /// Options are fixed on initial creation and cannot be updated by calling this
+   /// method again.
    ///
    /// # Arguments
    /// - `path` - The download path.
@@ -542,6 +544,23 @@ mod tests {
       let item = manager.get("/tmp/file.mp4").unwrap();
       assert_eq!(item.status, DownloadStatus::Idle);
       assert_eq!(item.url, VALID_URL);
+      assert!(item.options.allow_metered);
+   }
+
+   #[test]
+   fn test_list_returns_persisted_options() {
+      let (manager, _dir, _events) = make_manager();
+      let options = CreateOptions {
+         allow_metered: false,
+      };
+      manager
+         .create_with_options("/tmp/file.mp4", VALID_URL, options)
+         .unwrap();
+
+      let items = manager.list().unwrap();
+
+      assert_eq!(items.len(), 1);
+      assert_eq!(items[0].options, options);
    }
 
    #[test]
@@ -624,10 +643,11 @@ mod tests {
          .create_with_options(path, VALID_URL, restricted)
          .unwrap();
 
-      manager.create(path, VALID_URL).unwrap();
+      let response = manager.create(path, VALID_URL).unwrap();
 
       let stored = manager.store.find_by_path(path).unwrap().unwrap();
       assert_eq!(stored.options, restricted);
+      assert_eq!(response.download.options, restricted);
    }
 
    #[test]

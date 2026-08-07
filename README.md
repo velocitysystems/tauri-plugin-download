@@ -209,6 +209,11 @@ idle or paused so the action can be retried later. A connection change does not 
 download that is already in progress. Android and iOS currently accept this option but
 do not enforce it.
 
+The network policy is fixed when the download is first created. Every download state
+exposes its resolved policy through `download.options.allowMetered`. Calling `create()`
+again for an existing path returns the existing record without changing its URL or
+options.
+
 #### Listen for progress notifications
 
 Listeners can be attached to downloads in any status, including `Pending`.
