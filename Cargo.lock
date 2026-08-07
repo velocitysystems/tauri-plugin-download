@@ -512,7 +512,7 @@ dependencies = [
 [[package]]
 name = "connectivity"
 version = "0.1.0"
-source = "git+https://github.com/silvermine/tauri-plugin-connectivity#e14c43d85e153d6e867277e8e3759570f83ba503"
+source = "git+https://github.com/silvermine/tauri-plugin-connectivity?rev=e14c43d85e153d6e867277e8e3759570f83ba503#e14c43d85e153d6e867277e8e3759570f83ba503"
 dependencies = [
  "block2",
  "dispatch2",

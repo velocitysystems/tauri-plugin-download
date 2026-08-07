@@ -7,7 +7,7 @@ edition = "2024"
 rust-version = "1.94.0"
 
 [dependencies]
-connectivity = { git = "https://github.com/silvermine/tauri-plugin-connectivity" }
+connectivity = { version = "0.1.0", git = "https://github.com/silvermine/tauri-plugin-connectivity", rev = "e14c43d85e153d6e867277e8e3759570f83ba503" }
 futures = "0.3.31"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
