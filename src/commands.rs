@@ -38,7 +38,14 @@ pub(crate) async fn start<R: Runtime>(
    app: AppHandle<R>,
    path: String,
 ) -> Result<DownloadActionResponse> {
-   app.download().start(&path)
+   #[cfg(desktop)]
+   {
+      app.download().start(&path).await
+   }
+   #[cfg(mobile)]
+   {
+      app.download().start(&path)
+   }
 }
 
 #[command]
@@ -46,7 +53,14 @@ pub(crate) async fn resume<R: Runtime>(
    app: AppHandle<R>,
    path: String,
 ) -> Result<DownloadActionResponse> {
-   app.download().resume(&path)
+   #[cfg(desktop)]
+   {
+      app.download().resume(&path).await
+   }
+   #[cfg(mobile)]
+   {
+      app.download().resume(&path)
+   }
 }
 
 #[command]

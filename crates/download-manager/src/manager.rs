@@ -190,7 +190,7 @@ impl DownloadManager {
    ///
    /// # Returns
    /// The download operation.
-   pub fn start(&self, path: &str) -> crate::Result<DownloadActionResponse> {
+   pub async fn start(&self, path: &str) -> crate::Result<DownloadActionResponse> {
       validate::path(path)?;
 
       let item = self
@@ -200,7 +200,7 @@ impl DownloadManager {
       match item.status {
          // Allow download to be started when idle.
          DownloadStatus::Idle => {
-            self.ensure_network_allowed(&item)?;
+            self.ensure_network_allowed(&item).await?;
             self.spawn_download(item, "failed to start")
          }
 
@@ -220,7 +220,7 @@ impl DownloadManager {
    ///
    /// # Returns
    /// The download operation.
-   pub fn resume(&self, path: &str) -> crate::Result<DownloadActionResponse> {
+   pub async fn resume(&self, path: &str) -> crate::Result<DownloadActionResponse> {
       validate::path(path)?;
 
       let item = self
@@ -230,7 +230,7 @@ impl DownloadManager {
       match item.status {
          // Allow download to be resumed when paused.
          DownloadStatus::Paused => {
-            self.ensure_network_allowed(&item)?;
+            self.ensure_network_allowed(&item).await?;
             self.spawn_download(item, "failed to resume")
          }
 
@@ -275,12 +275,17 @@ impl DownloadManager {
       Ok(DownloadActionResponse::new(public_item))
    }
 
-   fn ensure_network_allowed(&self, item: &DownloadRecord) -> crate::Result<()> {
+   async fn ensure_network_allowed(&self, item: &DownloadRecord) -> crate::Result<()> {
       if item.options.allow_metered {
          return Ok(());
       }
 
-      let status = (self.connection_status)()?;
+      let status = tokio::task::spawn_blocking(self.connection_status)
+         .await
+         .map_err(|error| connectivity::Error::DetectionFailed {
+            message: format!("connection status worker failed: {error}"),
+            code: None,
+         })??;
 
       if !status.connected {
          return Err(Error::NetworkUnavailable);
@@ -599,28 +604,28 @@ mod tests {
 
    // ---------- start ----------
 
-   #[test]
-   fn test_start_unknown_path_returns_not_found() {
+   #[tokio::test]
+   async fn test_start_unknown_path_returns_not_found() {
       let (manager, _dir, _events) = make_manager();
       assert!(matches!(
-         manager.start("/tmp/unknown.mp4"),
+         manager.start("/tmp/unknown.mp4").await,
          Err(Error::NotFound(_))
       ));
    }
 
-   #[test]
-   fn test_start_rejects_invalid_path() {
+   #[tokio::test]
+   async fn test_start_rejects_invalid_path() {
       let (manager, _dir, _events) = make_manager();
-      assert!(manager.start("").is_err());
+      assert!(manager.start("").await.is_err());
    }
 
-   #[test]
-   fn test_start_from_non_idle_does_not_change_state() {
+   #[tokio::test]
+   async fn test_start_from_non_idle_does_not_change_state() {
       let (manager, _dir, _events) = make_manager();
       let path = "/tmp/file.mp4";
       seed(&manager, path, DownloadStatus::InProgress);
 
-      let response = manager.start(path).unwrap();
+      let response = manager.start(path).await.unwrap();
       assert_eq!(response.download.status, DownloadStatus::InProgress);
       assert_eq!(response.expected_status, DownloadStatus::InProgress);
       assert!(response.is_expected_status);
@@ -634,7 +639,7 @@ mod tests {
       let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
       manager.create("/tmp/file.mp4", LOCAL_URL).unwrap();
 
-      let response = manager.start("/tmp/file.mp4").unwrap();
+      let response = manager.start("/tmp/file.mp4").await.unwrap();
 
       assert_eq!(response.download.status, DownloadStatus::InProgress);
    }
@@ -653,13 +658,13 @@ mod tests {
          )
          .unwrap();
 
-      let response = manager.start("/tmp/file.mp4").unwrap();
+      let response = manager.start("/tmp/file.mp4").await.unwrap();
 
       assert_eq!(response.download.status, DownloadStatus::InProgress);
    }
 
-   #[test]
-   fn test_start_restricted_rejects_metered_connection_without_state_change() {
+   #[tokio::test]
+   async fn test_start_restricted_rejects_metered_connection_without_state_change() {
       let (manager, _dir, events) =
          make_manager_with_provider(|| Ok(connected_status(true, false)));
       let path = "/tmp/file.mp4";
@@ -674,7 +679,10 @@ mod tests {
          .unwrap();
       clear_events(&events);
 
-      assert!(matches!(manager.start(path), Err(Error::NetworkRestricted)));
+      assert!(matches!(
+         manager.start(path).await,
+         Err(Error::NetworkRestricted)
+      ));
       assert_eq!(
          manager.store.find_by_path(path).unwrap().unwrap().status,
          DownloadStatus::Idle
@@ -682,8 +690,8 @@ mod tests {
       assert!(event_log(&events).is_empty());
    }
 
-   #[test]
-   fn test_start_restricted_rejects_constrained_connection() {
+   #[tokio::test]
+   async fn test_start_restricted_rejects_constrained_connection() {
       let (manager, _dir, _events) =
          make_manager_with_provider(|| Ok(connected_status(false, true)));
       let path = "/tmp/file.mp4";
@@ -697,15 +705,18 @@ mod tests {
          )
          .unwrap();
 
-      assert!(matches!(manager.start(path), Err(Error::NetworkRestricted)));
+      assert!(matches!(
+         manager.start(path).await,
+         Err(Error::NetworkRestricted)
+      ));
       assert_eq!(
          manager.store.find_by_path(path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
    }
 
-   #[test]
-   fn test_start_restricted_rejects_disconnected_network() {
+   #[tokio::test]
+   async fn test_start_restricted_rejects_disconnected_network() {
       let (manager, _dir, _events) = make_manager();
       let path = "/tmp/file.mp4";
       manager
@@ -719,7 +730,7 @@ mod tests {
          .unwrap();
 
       assert!(matches!(
-         manager.start(path),
+         manager.start(path).await,
          Err(Error::NetworkUnavailable)
       ));
       assert_eq!(
@@ -728,8 +739,8 @@ mod tests {
       );
    }
 
-   #[test]
-   fn test_start_restricted_propagates_connectivity_error() {
+   #[tokio::test]
+   async fn test_start_restricted_propagates_connectivity_error() {
       let (manager, _dir, _events) = make_manager_with_provider(|| {
          Err(connectivity::Error::DetectionFailed {
             message: "backend unavailable".to_string(),
@@ -747,15 +758,18 @@ mod tests {
          )
          .unwrap();
 
-      assert!(matches!(manager.start(path), Err(Error::Connectivity(_))));
+      assert!(matches!(
+         manager.start(path).await,
+         Err(Error::Connectivity(_))
+      ));
       assert_eq!(
          manager.store.find_by_path(path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
    }
 
-   #[test]
-   fn test_start_from_non_idle_skips_connectivity_check() {
+   #[tokio::test]
+   async fn test_start_from_non_idle_skips_connectivity_check() {
       let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
       seed_with_options(
          &manager,
@@ -766,33 +780,33 @@ mod tests {
          },
       );
 
-      manager.start("/tmp/file.mp4").unwrap();
+      manager.start("/tmp/file.mp4").await.unwrap();
    }
 
    // ---------- resume ----------
 
-   #[test]
-   fn test_resume_unknown_path_returns_not_found() {
+   #[tokio::test]
+   async fn test_resume_unknown_path_returns_not_found() {
       let (manager, _dir, _events) = make_manager();
       assert!(matches!(
-         manager.resume("/tmp/unknown.mp4"),
+         manager.resume("/tmp/unknown.mp4").await,
          Err(Error::NotFound(_))
       ));
    }
 
-   #[test]
-   fn test_resume_rejects_invalid_path() {
+   #[tokio::test]
+   async fn test_resume_rejects_invalid_path() {
       let (manager, _dir, _events) = make_manager();
-      assert!(manager.resume("").is_err());
+      assert!(manager.resume("").await.is_err());
    }
 
-   #[test]
-   fn test_resume_from_non_paused_does_not_change_state() {
+   #[tokio::test]
+   async fn test_resume_from_non_paused_does_not_change_state() {
       let (manager, _dir, _events) = make_manager();
       let path = "/tmp/file.mp4";
       seed(&manager, path, DownloadStatus::Idle);
 
-      let response = manager.resume(path).unwrap();
+      let response = manager.resume(path).await.unwrap();
       assert_eq!(response.download.status, DownloadStatus::Idle);
       assert_eq!(response.expected_status, DownloadStatus::InProgress);
       assert!(!response.is_expected_status);
@@ -801,8 +815,8 @@ mod tests {
       assert_eq!(stored.status, DownloadStatus::Idle);
    }
 
-   #[test]
-   fn test_resume_restricted_rejects_metered_connection_without_state_change() {
+   #[tokio::test]
+   async fn test_resume_restricted_rejects_metered_connection_without_state_change() {
       let (manager, _dir, events) =
          make_manager_with_provider(|| Ok(connected_status(true, false)));
       let path = "/tmp/file.mp4";
@@ -816,7 +830,7 @@ mod tests {
       );
 
       assert!(matches!(
-         manager.resume(path),
+         manager.resume(path).await,
          Err(Error::NetworkRestricted)
       ));
       assert_eq!(
