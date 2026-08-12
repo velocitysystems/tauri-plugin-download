@@ -35,6 +35,13 @@ impl DownloadManager {
    /// - `data_dir` - Directory where `downloads.json` will be stored.
    /// - `on_changed` - Callback invoked on every state/progress change.
    pub fn new(data_dir: PathBuf, on_changed: OnChanged) -> Self {
+      #[cfg(target_os = "macos")]
+      {
+         // Start the path monitor early so its initial asynchronous update has
+         // normally populated the cache before the first policy check.
+         let _ = connectivity::connection_status();
+      }
+
       Self::with_connection_status_provider(data_dir, on_changed, connectivity::connection_status)
    }
 
