@@ -7,6 +7,14 @@ import {
 
 export const DOWNLOAD_EVENT_NAME = 'tauri-plugin-download:changed';
 
+type SerializedDownloadState<S extends DownloadStatus> =
+   Omit<DownloadState<S>, 'options' | 'receivedBytes' | 'totalBytes' | 'progress'> & {
+      readonly options?: Readonly<CreateOptions>;
+      receivedBytes?: number;
+      totalBytes?: number | null;
+      progress?: number;
+   };
+
 /**
  * Manages subscriptions to download events from Rust and mobile plugins (iOS/Android),
  * and dispatching these events to registered listeners.
@@ -71,17 +79,17 @@ class DownloadEventManager {
       const isNative = await invoke<boolean>('plugin:download|is_native');
 
       if (isNative) {
-         this._pluginListener = await addPluginListener('download', 'changed', (event: DownloadState<DownloadStatus>) => {
+         this._pluginListener = await addPluginListener('download', 'changed', (event: SerializedDownloadState<DownloadStatus>) => {
             this._notifyListeners(event.path, event);
          });
       } else {
-         this._eventUnlistenFn = await listen<DownloadState<DownloadStatus>>(DOWNLOAD_EVENT_NAME, (event) => {
+         this._eventUnlistenFn = await listen<SerializedDownloadState<DownloadStatus>>(DOWNLOAD_EVENT_NAME, (event) => {
             this._notifyListeners(event.payload.path, event.payload);
          });
       }
    }
 
-   private _notifyListeners(path: string, event: DownloadState<DownloadStatus>): void {
+   private _notifyListeners(path: string, event: SerializedDownloadState<DownloadStatus>): void {
       const listeners = this._listeners.get(path);
 
       if (listeners) {
@@ -199,11 +207,11 @@ const actions = {
  *
  * @param state The de-serialized download state from the plugin
  */
-export function attachDownload<S extends DownloadStatus>(state: DownloadState<S>): Download<S> {
+export function attachDownload<S extends DownloadStatus>(state: SerializedDownloadState<S>): Download<S> {
    const download = {
       url: state.url,
       path: state.path,
-      options: { ...state.options },
+      options: { allowMetered: state.options?.allowMetered ?? true },
       receivedBytes: state.receivedBytes ?? 0,
       totalBytes: state.totalBytes ?? null,
       progress: state.progress ?? 0,

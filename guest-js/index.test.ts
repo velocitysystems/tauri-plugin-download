@@ -363,6 +363,26 @@ describe('state machine — action availability', () => {
       expect(download.progress).toBe(42);
       expect(download.status).toBe(DownloadStatus.InProgress);
    });
+
+   it('defaults missing native options to allow metered connections', () => {
+      const download = attachDownload({
+         url: 'https://example.com/file.zip',
+         path: '/tmp/file.zip',
+         progress: 42,
+         status: DownloadStatus.InProgress,
+      });
+
+      expect(download.options).toEqual({ allowMetered: true });
+   });
+
+   it('preserves an explicit metered connection restriction', () => {
+      const download = attachDownload({
+         ...IDLE_STATE,
+         options: { allowMetered: false },
+      });
+
+      expect(download.options).toEqual({ allowMetered: false });
+   });
 });
 
 describe('wrapListenerWithAutoUnlisten', () => {
