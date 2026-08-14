@@ -480,18 +480,25 @@ mod tests {
       panic!("connectivity should not be checked")
    }
 
-   async fn make_mock_download(dir: &TempDir) -> (MockServer, String, String) {
+   async fn make_mock_download_expecting(
+      dir: &TempDir,
+      expected_requests: u64,
+   ) -> (MockServer, String, String) {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
          .and(wm_path("/file.mp4"))
          .respond_with(ResponseTemplate::new(200).set_body_bytes(MOCK_BODY.to_vec()))
-         .expect(1)
+         .expect(expected_requests)
          .mount(&server)
          .await;
 
       let path = dir.path().join("file.mp4").to_string_lossy().into_owned();
       let url = format!("{}/file.mp4", server.uri());
       (server, path, url)
+   }
+
+   async fn make_mock_download(dir: &TempDir) -> (MockServer, String, String) {
+      make_mock_download_expecting(dir, 1).await
    }
 
    async fn wait_for_download(manager: &DownloadManager, path: &str) {
@@ -794,15 +801,7 @@ mod tests {
          provider_release_check.wait();
          Ok(connected_status(false, false))
       });
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-         .and(wm_path("/file.mp4"))
-         .respond_with(ResponseTemplate::new(200).set_body_bytes(MOCK_BODY.to_vec()))
-         .expect(0)
-         .mount(&server)
-         .await;
-      let path = dir.path().join("file.mp4").to_string_lossy().into_owned();
-      let url = format!("{}/file.mp4", server.uri());
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
       manager
          .create_with_options(
             &path,
@@ -835,13 +834,12 @@ mod tests {
 
    #[tokio::test]
    async fn test_start_restricted_rejects_metered_connection_without_state_change() {
-      let (manager, _dir, events) =
-         make_manager_with_provider(|| Ok(connected_status(true, false)));
-      let path = "/tmp/file.mp4";
+      let (manager, dir, events) = make_manager_with_provider(|| Ok(connected_status(true, false)));
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
       manager
          .create_with_options(
-            path,
-            VALID_URL,
+            &path,
+            &url,
             CreateOptions {
                allow_metered: false,
             },
@@ -850,25 +848,26 @@ mod tests {
       clear_events(&events);
 
       assert!(matches!(
-         manager.start(path).await,
+         manager.start(&path).await,
          Err(Error::NetworkRestricted)
       ));
       assert_eq!(
-         manager.store.find_by_path(path).unwrap().unwrap().status,
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
       assert!(event_log(&events).is_empty());
+      server.verify().await;
    }
 
    #[tokio::test]
    async fn test_start_restricted_rejects_constrained_connection() {
-      let (manager, _dir, _events) =
+      let (manager, dir, _events) =
          make_manager_with_provider(|| Ok(connected_status(false, true)));
-      let path = "/tmp/file.mp4";
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
       manager
          .create_with_options(
-            path,
-            VALID_URL,
+            &path,
+            &url,
             CreateOptions {
                allow_metered: false,
             },
@@ -876,23 +875,24 @@ mod tests {
          .unwrap();
 
       assert!(matches!(
-         manager.start(path).await,
+         manager.start(&path).await,
          Err(Error::NetworkRestricted)
       ));
       assert_eq!(
-         manager.store.find_by_path(path).unwrap().unwrap().status,
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
+      server.verify().await;
    }
 
    #[tokio::test]
    async fn test_start_restricted_rejects_disconnected_network() {
-      let (manager, _dir, _events) = make_manager();
-      let path = "/tmp/file.mp4";
+      let (manager, dir, _events) = make_manager();
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
       manager
          .create_with_options(
-            path,
-            VALID_URL,
+            &path,
+            &url,
             CreateOptions {
                allow_metered: false,
             },
@@ -900,28 +900,29 @@ mod tests {
          .unwrap();
 
       assert!(matches!(
-         manager.start(path).await,
+         manager.start(&path).await,
          Err(Error::NetworkUnavailable)
       ));
       assert_eq!(
-         manager.store.find_by_path(path).unwrap().unwrap().status,
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
+      server.verify().await;
    }
 
    #[tokio::test]
    async fn test_start_restricted_propagates_connectivity_error() {
-      let (manager, _dir, _events) = make_manager_with_provider(|| {
+      let (manager, dir, _events) = make_manager_with_provider(|| {
          Err(connectivity::Error::DetectionFailed {
             message: "backend unavailable".to_string(),
             code: None,
          })
       });
-      let path = "/tmp/file.mp4";
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
       manager
          .create_with_options(
-            path,
-            VALID_URL,
+            &path,
+            &url,
             CreateOptions {
                allow_metered: false,
             },
@@ -929,49 +930,63 @@ mod tests {
          .unwrap();
 
       assert!(matches!(
-         manager.start(path).await,
+         manager.start(&path).await,
          Err(Error::Connectivity(_))
       ));
       assert_eq!(
-         manager.store.find_by_path(path).unwrap().unwrap().status,
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
+      server.verify().await;
    }
 
    #[tokio::test]
    async fn test_start_restricted_fails_closed_when_connectivity_worker_panics() {
-      let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
-      let path = "/tmp/file.mp4";
+      let (manager, dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
       manager
          .create_with_options(
-            path,
-            VALID_URL,
+            &path,
+            &url,
             CreateOptions {
                allow_metered: false,
             },
          )
          .unwrap();
 
-      assert!(matches!(manager.start(path).await, Err(Error::Internal(_))));
+      assert!(matches!(
+         manager.start(&path).await,
+         Err(Error::Internal(_))
+      ));
       assert_eq!(
-         manager.store.find_by_path(path).unwrap().unwrap().status,
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
+      server.verify().await;
    }
 
    #[tokio::test]
    async fn test_start_from_non_idle_skips_connectivity_check() {
-      let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
-      seed_with_options(
+      let (manager, dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
+      seed_with_url_and_options(
          &manager,
-         "/tmp/file.mp4",
+         &path,
+         &url,
          DownloadStatus::InProgress,
          CreateOptions {
             allow_metered: false,
          },
       );
 
-      manager.start("/tmp/file.mp4").await.unwrap();
+      let response = manager.start(&path).await.unwrap();
+
+      assert_eq!(response.download.status, DownloadStatus::InProgress);
+      assert_eq!(
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
+         DownloadStatus::InProgress
+      );
+      server.verify().await;
    }
 
    // ---------- resume ----------
@@ -993,17 +1008,26 @@ mod tests {
 
    #[tokio::test]
    async fn test_resume_from_non_paused_does_not_change_state() {
-      let (manager, _dir, _events) = make_manager();
-      let path = "/tmp/file.mp4";
-      seed(&manager, path, DownloadStatus::Idle);
+      let (manager, dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
+      seed_with_url_and_options(
+         &manager,
+         &path,
+         &url,
+         DownloadStatus::Idle,
+         CreateOptions {
+            allow_metered: false,
+         },
+      );
 
-      let response = manager.resume(path).await.unwrap();
+      let response = manager.resume(&path).await.unwrap();
       assert_eq!(response.download.status, DownloadStatus::Idle);
       assert_eq!(response.expected_status, DownloadStatus::InProgress);
       assert!(!response.is_expected_status);
 
-      let stored = manager.store.find_by_path(path).unwrap().unwrap();
+      let stored = manager.store.find_by_path(&path).unwrap().unwrap();
       assert_eq!(stored.status, DownloadStatus::Idle);
+      server.verify().await;
    }
 
    #[tokio::test]
@@ -1079,12 +1103,12 @@ mod tests {
 
    #[tokio::test]
    async fn test_resume_restricted_rejects_metered_connection_without_state_change() {
-      let (manager, _dir, events) =
-         make_manager_with_provider(|| Ok(connected_status(true, false)));
-      let path = "/tmp/file.mp4";
-      seed_with_options(
+      let (manager, dir, events) = make_manager_with_provider(|| Ok(connected_status(true, false)));
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
+      seed_with_url_and_options(
          &manager,
-         path,
+         &path,
+         &url,
          DownloadStatus::Paused,
          CreateOptions {
             allow_metered: false,
@@ -1092,23 +1116,25 @@ mod tests {
       );
 
       assert!(matches!(
-         manager.resume(path).await,
+         manager.resume(&path).await,
          Err(Error::NetworkRestricted)
       ));
       assert_eq!(
-         manager.store.find_by_path(path).unwrap().unwrap().status,
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Paused
       );
       assert!(event_log(&events).is_empty());
+      server.verify().await;
    }
 
    #[tokio::test]
    async fn test_resume_restricted_fails_closed_when_connectivity_worker_panics() {
-      let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
-      let path = "/tmp/file.mp4";
-      seed_with_options(
+      let (manager, dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
+      seed_with_url_and_options(
          &manager,
-         path,
+         &path,
+         &url,
          DownloadStatus::Paused,
          CreateOptions {
             allow_metered: false,
@@ -1116,13 +1142,14 @@ mod tests {
       );
 
       assert!(matches!(
-         manager.resume(path).await,
+         manager.resume(&path).await,
          Err(Error::Internal(_))
       ));
       assert_eq!(
-         manager.store.find_by_path(path).unwrap().unwrap().status,
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Paused
       );
+      server.verify().await;
    }
 
    // ---------- pause ----------
