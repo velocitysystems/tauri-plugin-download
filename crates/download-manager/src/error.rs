@@ -32,7 +32,10 @@ pub enum Error {
    NetworkRestricted,
 
    #[error("Connectivity Error: {0}")]
-   Connectivity(#[from] connectivity::Error),
+   Connectivity(String),
+
+   #[error("Internal Error: {0}")]
+   Internal(String),
 
    #[error(transparent)]
    Io(#[from] std::io::Error),
@@ -77,6 +80,14 @@ mod tests {
       assert_eq!(
          Error::NetworkRestricted.to_string(),
          "Network restricted: metered or constrained connections are not allowed"
+      );
+      assert_eq!(
+         Error::Connectivity("backend unavailable".to_string()).to_string(),
+         "Connectivity Error: backend unavailable"
+      );
+      assert_eq!(
+         Error::Internal("Connectivity worker failed".to_string()).to_string(),
+         "Internal Error: Connectivity worker failed"
       );
    }
 

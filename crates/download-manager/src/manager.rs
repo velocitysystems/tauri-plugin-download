@@ -310,10 +310,8 @@ impl DownloadManager {
       let connection_status = self.connection_status.clone();
       let status = tokio::task::spawn_blocking(move || connection_status())
          .await
-         .map_err(|error| connectivity::Error::DetectionFailed {
-            message: format!("connection status worker failed: {error}"),
-            code: None,
-         })??;
+         .map_err(|error| Error::Internal(format!("Connectivity worker failed: {error}")))?
+         .map_err(|error| Error::Connectivity(error.to_string()))?;
 
       if !status.connected {
          return Err(Error::NetworkUnavailable);
@@ -941,6 +939,27 @@ mod tests {
    }
 
    #[tokio::test]
+   async fn test_start_restricted_fails_closed_when_connectivity_worker_panics() {
+      let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      let path = "/tmp/file.mp4";
+      manager
+         .create_with_options(
+            path,
+            VALID_URL,
+            CreateOptions {
+               allow_metered: false,
+            },
+         )
+         .unwrap();
+
+      assert!(matches!(manager.start(path).await, Err(Error::Internal(_))));
+      assert_eq!(
+         manager.store.find_by_path(path).unwrap().unwrap().status,
+         DownloadStatus::Idle
+      );
+   }
+
+   #[tokio::test]
    async fn test_start_from_non_idle_skips_connectivity_check() {
       let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
       seed_with_options(
@@ -1081,6 +1100,29 @@ mod tests {
          DownloadStatus::Paused
       );
       assert!(event_log(&events).is_empty());
+   }
+
+   #[tokio::test]
+   async fn test_resume_restricted_fails_closed_when_connectivity_worker_panics() {
+      let (manager, _dir, _events) = make_manager_with_provider(unexpected_connectivity_check);
+      let path = "/tmp/file.mp4";
+      seed_with_options(
+         &manager,
+         path,
+         DownloadStatus::Paused,
+         CreateOptions {
+            allow_metered: false,
+         },
+      );
+
+      assert!(matches!(
+         manager.resume(path).await,
+         Err(Error::Internal(_))
+      ));
+      assert_eq!(
+         manager.store.find_by_path(path).unwrap().unwrap().status,
+         DownloadStatus::Paused
+      );
    }
 
    // ---------- pause ----------
