@@ -8,11 +8,12 @@ use tracing::{debug, error, info, warn};
 use crate::Error;
 use crate::downloader;
 use crate::models::*;
-use crate::store::DownloadStore;
+use crate::store::{DownloadStore, UpdateIfStatusResult};
 use crate::validate;
 
 type HttpClient = reqwest_middleware::ClientWithMiddleware;
-type ConnectionStatusProvider = fn() -> connectivity::Result<connectivity::ConnectionStatus>;
+type ConnectionStatusProvider =
+   Arc<dyn Fn() -> connectivity::Result<connectivity::ConnectionStatus> + Send + Sync>;
 
 pub(crate) static DOWNLOAD_SUFFIX: &str = ".download";
 
@@ -42,7 +43,11 @@ impl DownloadManager {
          let _ = connectivity::connection_status();
       }
 
-      Self::with_connection_status_provider(data_dir, on_changed, connectivity::connection_status)
+      Self::with_connection_status_provider(
+         data_dir,
+         on_changed,
+         Arc::new(connectivity::connection_status),
+      )
    }
 
    fn with_connection_status_provider(
@@ -210,7 +215,7 @@ impl DownloadManager {
          // Allow download to be started when idle.
          DownloadStatus::Idle => {
             self.ensure_network_allowed(&item).await?;
-            self.spawn_download(item, "failed to start")
+            self.spawn_download(item, DownloadStatus::Idle, "failed to start")
          }
 
          // Return current state if in any other state.
@@ -240,7 +245,7 @@ impl DownloadManager {
          // Allow download to be resumed when paused.
          DownloadStatus::Paused => {
             self.ensure_network_allowed(&item).await?;
-            self.spawn_download(item, "failed to resume")
+            self.spawn_download(item, DownloadStatus::Paused, "failed to resume")
          }
 
          // Return current state if in any other state.
@@ -254,10 +259,23 @@ impl DownloadManager {
    fn spawn_download(
       &self,
       item: DownloadRecord,
+      expected_status: DownloadStatus,
       err_msg: &'static str,
    ) -> crate::Result<DownloadActionResponse> {
-      let item_in_progress = item.with_status(DownloadStatus::InProgress);
-      self.store.update(item_in_progress.clone())?;
+      let item_in_progress = match self.store.update_if_status(
+         &item.path,
+         expected_status,
+         DownloadStatus::InProgress,
+      )? {
+         UpdateIfStatusResult::Updated(item) => item,
+         UpdateIfStatusResult::Unchanged(current) => {
+            return Ok(DownloadActionResponse::with_expected_status(
+               current.to_item(),
+               DownloadStatus::InProgress,
+            ));
+         }
+         UpdateIfStatusResult::NotFound => return Err(Error::NotFound(item.path)),
+      };
 
       let manager = self.clone();
       let path = item.path.clone();
@@ -289,7 +307,8 @@ impl DownloadManager {
          return Ok(());
       }
 
-      let status = tokio::task::spawn_blocking(self.connection_status)
+      let connection_status = self.connection_status.clone();
+      let status = tokio::task::spawn_blocking(move || connection_status())
          .await
          .map_err(|error| connectivity::Error::DetectionFailed {
             message: format!("connection status worker failed: {error}"),
@@ -418,7 +437,7 @@ fn filename(path: &str) -> &str {
 mod tests {
    use super::*;
    use connectivity::{ConnectionStatus, ConnectionType};
-   use std::sync::Mutex;
+   use std::sync::{Barrier, Mutex};
    use std::time::Duration;
    use tempfile::TempDir;
    use wiremock::matchers::{method, path as wm_path};
@@ -434,7 +453,7 @@ mod tests {
    }
 
    fn make_manager_with_provider(
-      connection_status: ConnectionStatusProvider,
+      connection_status: impl Fn() -> connectivity::Result<ConnectionStatus> + Send + Sync + 'static,
    ) -> (DownloadManager, TempDir, EventLog) {
       let dir = TempDir::new().unwrap();
       let events: EventLog = Arc::new(Mutex::new(Vec::new()));
@@ -445,7 +464,7 @@ mod tests {
       let manager = DownloadManager::with_connection_status_provider(
          dir.path().to_path_buf(),
          on_changed,
-         connection_status,
+         Arc::new(connection_status),
       );
       (manager, dir, events)
    }
@@ -739,6 +758,84 @@ mod tests {
    }
 
    #[tokio::test]
+   async fn test_start_restricted_concurrent_calls_spawn_once() {
+      let checks_ready = Arc::new(Barrier::new(2));
+      let provider_checks_ready = checks_ready.clone();
+      let (manager, dir, _events) = make_manager_with_provider(move || {
+         provider_checks_ready.wait();
+         Ok(connected_status(false, false))
+      });
+      let (server, path, url) = make_mock_download(&dir).await;
+      manager
+         .create_with_options(
+            &path,
+            &url,
+            CreateOptions {
+               allow_metered: false,
+            },
+         )
+         .unwrap();
+
+      let (first, second) = tokio::join!(manager.start(&path), manager.start(&path));
+
+      assert_eq!(first.unwrap().download.status, DownloadStatus::InProgress);
+      assert_eq!(second.unwrap().download.status, DownloadStatus::InProgress);
+      wait_for_download(&manager, &path).await;
+      assert_eq!(fs::read(&path).unwrap(), MOCK_BODY);
+      server.verify().await;
+   }
+
+   #[tokio::test]
+   async fn test_start_restricted_canceled_during_check_does_not_spawn() {
+      let check_entered = Arc::new(Barrier::new(2));
+      let release_check = Arc::new(Barrier::new(2));
+      let provider_check_entered = check_entered.clone();
+      let provider_release_check = release_check.clone();
+      let (manager, dir, _events) = make_manager_with_provider(move || {
+         provider_check_entered.wait();
+         provider_release_check.wait();
+         Ok(connected_status(false, false))
+      });
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+         .and(wm_path("/file.mp4"))
+         .respond_with(ResponseTemplate::new(200).set_body_bytes(MOCK_BODY.to_vec()))
+         .expect(0)
+         .mount(&server)
+         .await;
+      let path = dir.path().join("file.mp4").to_string_lossy().into_owned();
+      let url = format!("{}/file.mp4", server.uri());
+      manager
+         .create_with_options(
+            &path,
+            &url,
+            CreateOptions {
+               allow_metered: false,
+            },
+         )
+         .unwrap();
+
+      let cancel_manager = manager.clone();
+      let cancel_path = path.clone();
+      let wait_for_check = check_entered.clone();
+      let cancel = async move {
+         tokio::task::spawn_blocking(move || wait_for_check.wait())
+            .await
+            .unwrap();
+         let response = cancel_manager.cancel(&cancel_path).unwrap();
+         release_check.wait();
+         response
+      };
+      let (start_result, cancel_response) = tokio::join!(manager.start(&path), cancel);
+
+      assert!(matches!(start_result, Err(Error::NotFound(_))));
+      assert_eq!(cancel_response.download.status, DownloadStatus::Canceled);
+      assert!(manager.store.find_by_path(&path).unwrap().is_none());
+      assert!(!Path::new(&format!("{}{}", path, DOWNLOAD_SUFFIX)).exists());
+      server.verify().await;
+   }
+
+   #[tokio::test]
    async fn test_start_restricted_rejects_metered_connection_without_state_change() {
       let (manager, _dir, events) =
          make_manager_with_provider(|| Ok(connected_status(true, false)));
@@ -928,6 +1025,34 @@ mod tests {
       let response = manager.resume(&path).await.unwrap();
 
       assert_eq!(response.download.status, DownloadStatus::InProgress);
+      wait_for_download(&manager, &path).await;
+      assert_eq!(fs::read(&path).unwrap(), MOCK_BODY);
+      server.verify().await;
+   }
+
+   #[tokio::test]
+   async fn test_resume_restricted_concurrent_calls_spawn_once() {
+      let checks_ready = Arc::new(Barrier::new(2));
+      let provider_checks_ready = checks_ready.clone();
+      let (manager, dir, _events) = make_manager_with_provider(move || {
+         provider_checks_ready.wait();
+         Ok(connected_status(false, false))
+      });
+      let (server, path, url) = make_mock_download(&dir).await;
+      seed_with_url_and_options(
+         &manager,
+         &path,
+         &url,
+         DownloadStatus::Paused,
+         CreateOptions {
+            allow_metered: false,
+         },
+      );
+
+      let (first, second) = tokio::join!(manager.resume(&path), manager.resume(&path));
+
+      assert_eq!(first.unwrap().download.status, DownloadStatus::InProgress);
+      assert_eq!(second.unwrap().download.status, DownloadStatus::InProgress);
       wait_for_download(&manager, &path).await;
       assert_eq!(fs::read(&path).unwrap(), MOCK_BODY);
       server.verify().await;

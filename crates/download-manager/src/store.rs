@@ -3,7 +3,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::Error;
-use crate::models::DownloadRecord;
+use crate::models::{DownloadRecord, DownloadStatus};
+
+pub(crate) enum UpdateIfStatusResult {
+   Updated(DownloadRecord),
+   Unchanged(DownloadRecord),
+   NotFound,
+}
 
 /// Thread-safe JSON file store for download records, mirroring iOS `DownloadStore`.
 #[derive(Clone, Debug)]
@@ -73,6 +79,31 @@ impl DownloadStore {
       }
       save_inner(&inner)?;
       Ok(())
+   }
+
+   pub fn update_if_status(
+      &self,
+      path: &str,
+      expected_status: DownloadStatus,
+      new_status: DownloadStatus,
+   ) -> crate::Result<UpdateIfStatusResult> {
+      let mut inner = self
+         .inner
+         .lock()
+         .map_err(|e| Error::Store(format!("Lock poisoned: {}", e)))?;
+
+      let Some(existing) = inner.downloads.iter_mut().find(|item| item.path == path) else {
+         return Ok(UpdateIfStatusResult::NotFound);
+      };
+
+      if existing.status != expected_status {
+         return Ok(UpdateIfStatusResult::Unchanged(existing.clone()));
+      }
+
+      existing.status = new_status;
+      let updated = existing.clone();
+      save_inner(&inner)?;
+      Ok(UpdateIfStatusResult::Updated(updated))
    }
 
    pub fn update_no_persist(&self, item: DownloadRecord) -> crate::Result<()> {
@@ -252,6 +283,78 @@ mod tests {
       let unknown = sample_record("/tmp/unknown.mp4");
       assert!(store.update(unknown).is_ok());
       assert_eq!(store.list().unwrap().len(), 1);
+   }
+
+   #[test]
+   fn test_update_if_status_updates_matching_record() {
+      let (store, dir) = temp_store();
+      store.create(sample_record("/tmp/file.mp4")).unwrap();
+
+      let result = store
+         .update_if_status(
+            "/tmp/file.mp4",
+            DownloadStatus::Idle,
+            DownloadStatus::InProgress,
+         )
+         .unwrap();
+
+      assert!(matches!(
+         result,
+         UpdateIfStatusResult::Updated(item)
+            if item.status == DownloadStatus::InProgress
+      ));
+
+      let reloaded = DownloadStore::new(dir.path().join("downloads.json"));
+      reloaded.load().unwrap();
+      assert_eq!(
+         reloaded
+            .find_by_path("/tmp/file.mp4")
+            .unwrap()
+            .unwrap()
+            .status,
+         DownloadStatus::InProgress
+      );
+   }
+
+   #[test]
+   fn test_update_if_status_returns_current_record_on_mismatch() {
+      let (store, _dir) = temp_store();
+      let mut item = sample_record("/tmp/file.mp4");
+      item.status = DownloadStatus::Paused;
+      store.create(item).unwrap();
+
+      let result = store
+         .update_if_status(
+            "/tmp/file.mp4",
+            DownloadStatus::Idle,
+            DownloadStatus::InProgress,
+         )
+         .unwrap();
+
+      assert!(matches!(
+         result,
+         UpdateIfStatusResult::Unchanged(item) if item.status == DownloadStatus::Paused
+      ));
+      assert_eq!(
+         store.find_by_path("/tmp/file.mp4").unwrap().unwrap().status,
+         DownloadStatus::Paused
+      );
+   }
+
+   #[test]
+   fn test_update_if_status_returns_not_found_for_unknown_path() {
+      let (store, _dir) = temp_store();
+
+      assert!(matches!(
+         store
+            .update_if_status(
+               "/tmp/missing.mp4",
+               DownloadStatus::Idle,
+               DownloadStatus::InProgress,
+            )
+            .unwrap(),
+         UpdateIfStatusResult::NotFound
+      ));
    }
 
    #[test]
