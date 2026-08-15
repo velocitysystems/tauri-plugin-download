@@ -501,6 +501,13 @@ mod tests {
       make_mock_download_expecting(dir, 1).await
    }
 
+   async fn verify_no_requests(server: &MockServer) {
+      // `#[tokio::test]` uses a current-thread runtime, so a newly spawned
+      // downloader may not be polled before an immediate verification.
+      tokio::time::sleep(Duration::from_millis(100)).await;
+      server.verify().await;
+   }
+
    async fn wait_for_download(manager: &DownloadManager, path: &str) {
       tokio::time::timeout(Duration::from_secs(5), async {
          loop {
@@ -829,7 +836,7 @@ mod tests {
       assert_eq!(cancel_response.download.status, DownloadStatus::Canceled);
       assert!(manager.store.find_by_path(&path).unwrap().is_none());
       assert!(!Path::new(&format!("{}{}", path, DOWNLOAD_SUFFIX)).exists());
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    #[tokio::test]
@@ -856,7 +863,7 @@ mod tests {
          DownloadStatus::Idle
       );
       assert!(event_log(&events).is_empty());
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    #[tokio::test]
@@ -882,7 +889,7 @@ mod tests {
          manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    #[tokio::test]
@@ -907,7 +914,7 @@ mod tests {
          manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    #[tokio::test]
@@ -937,7 +944,7 @@ mod tests {
          manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    #[tokio::test]
@@ -962,7 +969,7 @@ mod tests {
          manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Idle
       );
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    #[tokio::test]
@@ -986,7 +993,7 @@ mod tests {
          manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::InProgress
       );
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    // ---------- resume ----------
@@ -1027,7 +1034,7 @@ mod tests {
 
       let stored = manager.store.find_by_path(&path).unwrap().unwrap();
       assert_eq!(stored.status, DownloadStatus::Idle);
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    #[tokio::test]
@@ -1124,7 +1131,7 @@ mod tests {
          DownloadStatus::Paused
       );
       assert!(event_log(&events).is_empty());
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    #[tokio::test]
@@ -1149,7 +1156,7 @@ mod tests {
          manager.store.find_by_path(&path).unwrap().unwrap().status,
          DownloadStatus::Paused
       );
-      server.verify().await;
+      verify_no_requests(&server).await;
    }
 
    // ---------- pause ----------
