@@ -316,7 +316,7 @@ impl DownloadManager {
       if !status.connected {
          return Err(Error::NetworkUnavailable);
       }
-      if status.metered || status.constrained {
+      if status.metered != Some(false) || status.constrained != Some(false) {
          return Err(Error::NetworkRestricted);
       }
 
@@ -468,6 +468,13 @@ mod tests {
    }
 
    fn connected_status(metered: bool, constrained: bool) -> ConnectionStatus {
+      connected_status_with_policy(Some(metered), Some(constrained))
+   }
+
+   fn connected_status_with_policy(
+      metered: Option<bool>,
+      constrained: Option<bool>,
+   ) -> ConnectionStatus {
       ConnectionStatus {
          connected: true,
          metered,
@@ -893,6 +900,34 @@ mod tests {
    }
 
    #[tokio::test]
+   async fn test_start_restricted_rejects_unknown_metering() {
+      let (manager, dir, events) =
+         make_manager_with_provider(|| Ok(connected_status_with_policy(None, Some(false))));
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
+      manager
+         .create_with_options(
+            &path,
+            &url,
+            CreateOptions {
+               allow_metered: false,
+            },
+         )
+         .unwrap();
+      clear_events(&events);
+
+      assert!(matches!(
+         manager.start(&path).await,
+         Err(Error::NetworkRestricted)
+      ));
+      assert_eq!(
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
+         DownloadStatus::Idle
+      );
+      assert!(event_log(&events).is_empty());
+      verify_no_requests(&server).await;
+   }
+
+   #[tokio::test]
    async fn test_start_restricted_rejects_disconnected_network() {
       let (manager, dir, _events) = make_manager();
       let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
@@ -1111,6 +1146,33 @@ mod tests {
    #[tokio::test]
    async fn test_resume_restricted_rejects_metered_connection_without_state_change() {
       let (manager, dir, events) = make_manager_with_provider(|| Ok(connected_status(true, false)));
+      let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
+      seed_with_url_and_options(
+         &manager,
+         &path,
+         &url,
+         DownloadStatus::Paused,
+         CreateOptions {
+            allow_metered: false,
+         },
+      );
+
+      assert!(matches!(
+         manager.resume(&path).await,
+         Err(Error::NetworkRestricted)
+      ));
+      assert_eq!(
+         manager.store.find_by_path(&path).unwrap().unwrap().status,
+         DownloadStatus::Paused
+      );
+      assert!(event_log(&events).is_empty());
+      verify_no_requests(&server).await;
+   }
+
+   #[tokio::test]
+   async fn test_resume_restricted_rejects_unknown_constraint() {
+      let (manager, dir, events) =
+         make_manager_with_provider(|| Ok(connected_status_with_policy(Some(false), None)));
       let (server, path, url) = make_mock_download_expecting(&dir, 0).await;
       seed_with_url_and_options(
          &manager,

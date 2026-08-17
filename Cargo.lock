@@ -512,7 +512,7 @@ dependencies = [
 [[package]]
 name = "connectivity"
 version = "0.1.0"
-source = "git+https://github.com/silvermine/tauri-plugin-connectivity?rev=e14c43d85e153d6e867277e8e3759570f83ba503#e14c43d85e153d6e867277e8e3759570f83ba503"
+source = "git+https://github.com/silvermine/tauri-plugin-connectivity?rev=3f127708860d9cd1463e4c94628ac67db520c006#3f127708860d9cd1463e4c94628ac67db520c006"
 dependencies = [
  "block2",
  "dispatch2",
@@ -3333,7 +3333,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4599,7 +4599,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4999,7 +4999,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
