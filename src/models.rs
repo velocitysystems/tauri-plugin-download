@@ -1,11 +1,31 @@
 // Desktop model types
 #[cfg(desktop)]
-pub use download_manager::{DownloadActionResponse, DownloadItem};
+pub use download_manager::{CreateOptions, DownloadActionResponse, DownloadItem};
 
 // Mobile model types (iOS, Android)
 #[cfg(mobile)]
 mod mobile_types {
    use serde::{Deserialize, Serialize};
+
+   /// Options fixed when a download is created.
+   #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+   #[serde(rename_all = "camelCase")]
+   pub struct CreateOptions {
+      #[serde(default = "default_allow_metered")]
+      pub allow_metered: bool,
+   }
+
+   impl Default for CreateOptions {
+      fn default() -> Self {
+         Self {
+            allow_metered: true,
+         }
+      }
+   }
+
+   const fn default_allow_metered() -> bool {
+      true
+   }
 
    #[derive(Serialize)]
    #[serde(rename_all = "camelCase")]
@@ -25,6 +45,8 @@ mod mobile_types {
    pub struct DownloadItem {
       pub url: String,
       pub path: String,
+      #[serde(default)]
+      pub options: CreateOptions,
       #[serde(default)]
       pub received_bytes: u64,
       #[serde(default)]
@@ -77,4 +99,4 @@ mod mobile_types {
 }
 
 #[cfg(mobile)]
-pub use mobile_types::{CreateArgs, DownloadActionResponse, DownloadItem, PathArgs};
+pub use mobile_types::{CreateArgs, CreateOptions, DownloadActionResponse, DownloadItem, PathArgs};

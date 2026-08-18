@@ -30,6 +30,7 @@ let lastCmd = '',
 const IDLE_STATE = {
    url: 'https://example.com/file.zip',
    path: '/tmp/file.zip',
+   options: { allowMetered: true },
    receivedBytes: 0,
    totalBytes: null,
    progress: 0,
@@ -39,6 +40,7 @@ const IDLE_STATE = {
 const IN_PROGRESS_STATE = {
    url: 'https://example.com/file.zip',
    path: '/tmp/file.zip',
+   options: { allowMetered: true },
    receivedBytes: 42,
    totalBytes: 100,
    progress: 42,
@@ -48,6 +50,7 @@ const IN_PROGRESS_STATE = {
 const PAUSED_STATE = {
    url: 'https://example.com/file.zip',
    path: '/tmp/file.zip',
+   options: { allowMetered: true },
    receivedBytes: 42,
    totalBytes: 100,
    progress: 42,
@@ -77,6 +80,7 @@ beforeEach(() => {
          return {
             url: '',
             path,
+            options: { allowMetered: true },
             receivedBytes: 0,
             totalBytes: null,
             progress: 0,
@@ -175,8 +179,20 @@ describe('download actions', () => {
       expect(lastCmd).toBe('plugin:download|create');
       expect(lastArgs.path).toBe('/tmp/unknown.zip');
       expect(lastArgs.url).toBe('https://example.com/file.zip');
+      expect(lastArgs.options).toBeUndefined();
       expect(response.isExpectedStatus).toBe(true);
       expect(response.download.status).toBe(DownloadStatus.Idle);
+   });
+
+   it('create — forwards network policy options', async () => {
+      const pending = await get('/tmp/unknown.zip');
+
+      if (!hasAction(pending, DownloadAction.Create)) {
+         throw new Error('expected create action');
+      }
+      await pending.create('https://example.com/file.zip', { allowMetered: false });
+
+      expect(lastArgs.options).toEqual({ allowMetered: false });
    });
 
    it('start — sends path, returns InProgress download', async () => {
@@ -251,6 +267,7 @@ describe('state machine — action availability', () => {
       const download = attachDownload({
          url: '',
          path: '/tmp/file.zip',
+         options: { allowMetered: true },
          receivedBytes: 0,
          totalBytes: null,
          progress: 0,
@@ -340,10 +357,31 @@ describe('state machine — action availability', () => {
 
       expect(download.url).toBe('https://example.com/file.zip');
       expect(download.path).toBe('/tmp/file.zip');
+      expect(download.options).toEqual({ allowMetered: true });
       expect(download.receivedBytes).toBe(42);
       expect(download.totalBytes).toBe(100);
       expect(download.progress).toBe(42);
       expect(download.status).toBe(DownloadStatus.InProgress);
+   });
+
+   it('defaults missing native options to allow metered connections', () => {
+      const download = attachDownload({
+         url: 'https://example.com/file.zip',
+         path: '/tmp/file.zip',
+         progress: 42,
+         status: DownloadStatus.InProgress,
+      });
+
+      expect(download.options).toEqual({ allowMetered: true });
+   });
+
+   it('preserves an explicit metered connection restriction', () => {
+      const download = attachDownload({
+         ...IDLE_STATE,
+         options: { allowMetered: false },
+      });
+
+      expect(download.options).toEqual({ allowMetered: false });
    });
 });
 

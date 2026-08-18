@@ -25,6 +25,18 @@ pub enum Error {
    #[error("Path Error: {0}")]
    Path(String),
 
+   #[error("Network unavailable: no active connection")]
+   NetworkUnavailable,
+
+   #[error("Network restricted: metered or constrained connections are not allowed")]
+   NetworkRestricted,
+
+   #[error("Connectivity Error: {0}")]
+   Connectivity(String),
+
+   #[error("Internal Error: {0}")]
+   Internal(String),
+
    #[error(transparent)]
    Io(#[from] std::io::Error),
 }
@@ -60,6 +72,22 @@ mod tests {
       assert_eq!(
          Error::Http("timeout".to_string()).to_string(),
          "HTTP Error: timeout"
+      );
+      assert_eq!(
+         Error::NetworkUnavailable.to_string(),
+         "Network unavailable: no active connection"
+      );
+      assert_eq!(
+         Error::NetworkRestricted.to_string(),
+         "Network restricted: metered or constrained connections are not allowed"
+      );
+      assert_eq!(
+         Error::Connectivity("backend unavailable".to_string()).to_string(),
+         "Connectivity Error: backend unavailable"
+      );
+      assert_eq!(
+         Error::Internal("Connectivity worker failed".to_string()).to_string(),
+         "Internal Error: Connectivity worker failed"
       );
    }
 

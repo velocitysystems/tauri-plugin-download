@@ -19,8 +19,18 @@ pub(crate) async fn create<R: Runtime>(
    app: AppHandle<R>,
    path: String,
    url: String,
+   options: Option<CreateOptions>,
 ) -> Result<DownloadActionResponse> {
-   app.download().create(&path, &url)
+   #[cfg(desktop)]
+   {
+      app.download()
+         .create_with_options(&path, &url, options.unwrap_or_default())
+   }
+   #[cfg(mobile)]
+   {
+      let _ = options;
+      app.download().create(&path, &url)
+   }
 }
 
 #[command]
@@ -28,7 +38,14 @@ pub(crate) async fn start<R: Runtime>(
    app: AppHandle<R>,
    path: String,
 ) -> Result<DownloadActionResponse> {
-   app.download().start(&path)
+   #[cfg(desktop)]
+   {
+      app.download().start(&path).await
+   }
+   #[cfg(mobile)]
+   {
+      app.download().start(&path)
+   }
 }
 
 #[command]
@@ -36,7 +53,14 @@ pub(crate) async fn resume<R: Runtime>(
    app: AppHandle<R>,
    path: String,
 ) -> Result<DownloadActionResponse> {
-   app.download().resume(&path)
+   #[cfg(desktop)]
+   {
+      app.download().resume(&path).await
+   }
+   #[cfg(mobile)]
+   {
+      app.download().resume(&path)
+   }
 }
 
 #[command]

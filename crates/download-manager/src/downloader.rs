@@ -287,6 +287,7 @@ mod tests {
       let item = DownloadRecord {
          url: url.to_string(),
          path: dest_path.to_string(),
+         options: CreateOptions::default(),
          received_bytes: 0,
          total_bytes: None,
          status: DownloadStatus::InProgress,

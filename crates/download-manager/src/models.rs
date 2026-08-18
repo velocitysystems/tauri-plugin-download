@@ -1,6 +1,30 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Options that control when a download is allowed to use the network.
+///
+/// Options are fixed when the download is created and remain unchanged for the
+/// lifetime of its persisted record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateOptions {
+   /// Whether the download may start on metered or constrained connections.
+   #[serde(default = "default_allow_metered")]
+   pub allow_metered: bool,
+}
+
+impl Default for CreateOptions {
+   fn default() -> Self {
+      Self {
+         allow_metered: true,
+      }
+   }
+}
+
+const fn default_allow_metered() -> bool {
+   true
+}
+
 /// Persisted download record. Stored in `downloads.json`.
 ///
 /// Does not contain `progress` — that is a derived value only present in
@@ -10,6 +34,8 @@ use std::fmt;
 pub(crate) struct DownloadRecord {
    pub url: String,
    pub path: String,
+   #[serde(default)]
+   pub options: CreateOptions,
    #[serde(default)]
    pub received_bytes: u64,
    #[serde(default)]
@@ -24,6 +50,8 @@ pub(crate) struct DownloadRecord {
 pub struct DownloadItem {
    pub url: String,
    pub path: String,
+   /// Network policy fixed when the download was created.
+   pub options: CreateOptions,
    pub received_bytes: u64,
    pub total_bytes: Option<u64>,
    pub progress: f64,
@@ -105,6 +133,7 @@ impl DownloadRecord {
       DownloadItem {
          url: self.url.clone(),
          path: self.path.clone(),
+         options: self.options,
          received_bytes: self.received_bytes,
          total_bytes: self.total_bytes,
          progress,
@@ -136,6 +165,7 @@ mod tests {
       DownloadRecord {
          url: "http://example.com/file.mp4".to_string(),
          path: "/tmp/file.mp4".to_string(),
+         options: CreateOptions::default(),
          received_bytes: 0,
          total_bytes: None,
          status: DownloadStatus::Idle,
@@ -186,12 +216,18 @@ mod tests {
    #[test]
    fn test_to_item_with_known_size() {
       let mut record = sample_record();
+      record.options.allow_metered = false;
       record.received_bytes = 500;
       record.total_bytes = Some(1000);
       let item = record.to_item();
+      assert!(!item.options.allow_metered);
       assert_eq!(item.progress, 50.0);
       assert_eq!(item.received_bytes, 500);
       assert_eq!(item.total_bytes, Some(1000));
+      assert_eq!(
+         serde_json::to_value(&item).unwrap()["options"]["allowMetered"],
+         false
+      );
    }
 
    #[test]
@@ -230,6 +266,29 @@ mod tests {
       let record: DownloadRecord = serde_json::from_str(json).unwrap();
       assert_eq!(record.received_bytes, 0);
       assert_eq!(record.total_bytes, None);
+      assert!(record.options.allow_metered);
+   }
+
+   #[test]
+   fn test_create_options_default_allows_metered_connections() {
+      assert!(CreateOptions::default().allow_metered);
+
+      let options: CreateOptions = serde_json::from_str("{}").unwrap();
+      assert!(options.allow_metered);
+   }
+
+   #[test]
+   fn test_create_options_round_trip_restriction() {
+      let options = CreateOptions {
+         allow_metered: false,
+      };
+      let json = serde_json::to_string(&options).unwrap();
+
+      assert_eq!(json, r#"{"allowMetered":false}"#);
+      assert_eq!(
+         serde_json::from_str::<CreateOptions>(&json).unwrap(),
+         options
+      );
    }
 
    #[test]

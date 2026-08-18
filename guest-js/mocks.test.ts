@@ -113,18 +113,42 @@ describe('mockDownloadPlugin', () => {
          throw new Error('expected create action');
       }
 
-      const response = await download.create('https://example.com/new.zip');
+      const response = await download.create('https://example.com/new.zip', { allowMetered: false });
 
       expect(response.isExpectedStatus).toBe(true);
       expect(response.download.status).toBe(DownloadStatus.Idle);
+      expect(controller.getLastInvocation()?.args.options).toEqual({ allowMetered: false });
       expect(controller.getDownload('/tmp/new.zip')).toEqual({
          url: 'https://example.com/new.zip',
          path: '/tmp/new.zip',
+         options: { allowMetered: false },
          receivedBytes: 0,
          totalBytes: null,
          progress: 0,
          status: DownloadStatus.Idle,
       });
+   });
+
+   it('keeps create-time options when create is repeated', async () => {
+      const path = '/tmp/existing.zip';
+
+      const controller = mockDownloadPlugin({
+         downloads: [
+            createMockDownloadState(DownloadStatus.Idle, {
+               path,
+               options: { allowMetered: false },
+            }),
+         ],
+      });
+
+      const response = await invoke<DownloadActionResponse>('plugin:download|create', {
+         path,
+         url: 'https://example.com/recreated.zip',
+         options: { allowMetered: true },
+      });
+
+      expect(response.download.options).toEqual({ allowMetered: false });
+      expect(controller.getDownload(path).options).toEqual({ allowMetered: false });
    });
 
    it('emits mocked desktop events to download listeners', async () => {
