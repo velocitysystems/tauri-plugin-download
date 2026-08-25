@@ -213,20 +213,30 @@ Only mobile has an OS scheduler to defer to, so desktop refuses where mobile wai
 | --- | --- | --- |
 | Desktop | Rejects; the download stays `Idle` or `Paused` to retry later. | Keeps running. |
 | iOS | Resolves, status `InProgress`; the background `URLSession` task waits, transferring nothing. | Stalls, then continues on its own. |
-| Android | Resolves, status `InProgress`; WorkManager holds the work request. | Stops. Whether it resumes on its own is a race — see below. |
+| Android | Resolves, status `InProgress`; WorkManager holds the work request. | Stalls, then continues on its own — see below. |
 
-Android is the row to plan for. Two paths can observe the network change, and they
-differ in the one way that matters:
+Neither platform needs a call from you to recover, but they differ. iOS leaves the task
+alone and it continues when a network satisfies it. Android's worker cannot survive the
+connection going away, so WorkManager retries it on the same constraint, resuming from
+the partial file — expect it to lag by the backoff delay rather than restarting the
+moment the network qualifies.
 
-   * WorkManager's constraint tracker stops the worker — it re-runs by itself once the
-     network qualifies again.
-   * The connection drops out from under the transfer first — the worker reports
-     failure, WorkManager does not retry, and the download waits for a `resume()`.
+Two caveats on Android. If the constraint tracker stops the worker before the connection
+drops — the two race — the download reports `Paused` before the retry moves it back to
+`InProgress`.
 
-Both revert to `Paused`, or to `Idle` if nothing had reached disk yet. So a restricted
-download may move between `Paused` and `InProgress` with no call from you, and may
-equally sit there waiting for one: never read `Paused` as "the user paused it", and
-never rely on an automatic resume.
+The same happens while work is merely waiting, which is ordinary rather than a race: a
+record held on the unmetered constraint or in a retry backoff stays `InProgress` with no
+worker running. Restart the app then and the plugin reconciles it to `Paused`, or `Idle`
+at zero bytes when no partial file survives, before the pending work moves it back.
+Reconciliation emits no event, so the stale value arrives through the next `get()` or
+`list()`.
+
+So treat `Paused` and `Idle` as "not currently transferring" rather than "waiting for the
+user", and drive recovery off events. No bytes are lost either way. Constraint holds are
+not time-limited; transient errors are. A download gives up after at most five retries —
+fewer if constraint interruptions have spent part of the same budget — then needs
+`resume()`, or `start()` if it reconciled to `Idle`.
 
 > Resuming an iOS download goes through `downloadTask(withResumeData:)`, which takes no
 > request, so the policy is inherited from the original task rather than reapplied. That

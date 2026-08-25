@@ -525,22 +525,22 @@ public final class DownloadManager: NSObject {
    /// Reconciles the store against the session's live tasks.
    ///
    /// Background-session tasks outlive the process and are restored alongside the
-   /// session, so a record is reverted only when the session reports no task for
-   /// its path — otherwise a download that is genuinely still running would be
-   /// clobbered. Android's reconcileStoreOnInit() needs no such check, because
-   /// WorkManager reruns the worker and it rewrites the status itself.
+   /// session, so a record is reverted only when the session reports no task for its
+   /// path — otherwise a download still running would be clobbered. Android needs no
+   /// such check: its worker constructs the manager before transferring, so
+   /// reconciliation always precedes any transfer — though a backoff or the unmetered
+   /// constraint can leave a record reading Paused or Idle for a while first.
    ///
-   /// That live-task check is also why the delegate handlers — handleProgress,
-   /// handleFinished, handleError — do not await ensureReconciled(), and must not
-   /// start doing so: gating them would serialize every progress callback behind
-   /// reconciliation for no benefit. They are already safe against it because
+   /// That check is also why the delegate handlers — handleProgress, handleFinished,
+   /// handleError — do not await ensureReconciled(), and must not start: gating them
+   /// would serialize every progress callback behind reconciliation for no benefit.
+   /// They are already safe because
    ///
-   /// - this reverts only records with no live task, while a callback fires only
-   ///   for a task that exists, so the two act on disjoint records;
-   /// - a new task can only appear via start()/resume(), which do await the gate,
-   ///   so none can be created while this is running; and
+   /// - this reverts only records with no live task, while a callback fires only for
+   ///   a task that exists, so the two act on disjoint records;
+   /// - a new task can only appear via start()/resume(), which do await the gate; and
    /// - if a restored task finishes mid-reconcile and handleFinished removes its
-   ///   record, the batched update below cannot resurrect it — DownloadStore's
+   ///   record, the batched update cannot resurrect it — DownloadStore's
    ///   update(_ records:) writes only paths that still exist.
    private func reconcileStore() async {
       let livePaths = Set(await session.allTasks.compactMap { $0.taskDescription })
