@@ -407,6 +407,18 @@ The `android/` directory is a 3-module Gradle build:
 Open the `android/` directory in Android Studio, select the `:example` run configuration,
 and run on an emulator or device.
 
+### Testing the Network Policy
+
+No SIM is needed: mark the Wi-Fi network as metered from its settings page — under
+Network & internet on stock Android, Connections on One UI — where the option reads
+"Treat as metered" or "Metered". The
+example app's "Allow metered networks" toggle sets `allowMetered` on the downloads it
+creates, and each row shows the policy it was created with.
+
+With the toggle off, a download started on a metered network holds at zero bytes and
+begins once the network is marked unmetered. Marking the network metered mid-transfer
+stalls it, and it continues by itself a backoff delay later.
+
 ## iOS Support
 
 On iOS, this plugin uses `URLSession` with a background configuration, which allows
@@ -425,6 +437,23 @@ to continue even when the app is suspended or terminated by the system.
 
 Open `ios/DownloadManagerExample/DownloadManagerExample.xcodeproj` in Xcode,
 select a simulator or device, and run.
+
+### Testing the Network Policy
+
+No SIM is needed, but a real device is: Low Data Mode cannot be set on a simulator.
+Toggle it under Settings → Wi-Fi → the ⓘ beside your network → Low Data Mode, which
+trips `allowsConstrainedNetworkAccess`. The example app's "Allow metered networks"
+toggle sets `allowMetered` on the downloads it creates, and each row shows the policy
+it was created with.
+
+With the toggle off, a download started in Low Data Mode holds at zero bytes and
+begins once Low Data Mode is off. Turning it on mid-transfer stalls the download
+without leaving `inProgress`, and it continues by itself once it is off again.
+
+Worth repeating on new iOS majors: pause a restricted download, turn Low Data Mode on,
+then resume. It should stay stalled. Resuming goes through
+`downloadTask(withResumeData:)`, which carries the policy in undocumented resume data,
+so this is the check that catches a silent regression there.
 
 ### Tauri Apps
 
