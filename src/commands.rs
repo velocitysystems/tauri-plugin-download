@@ -19,17 +19,17 @@ pub(crate) async fn create<R: Runtime>(
    app: AppHandle<R>,
    path: String,
    url: String,
-   options: Option<CreateOptions>,
+   options: Option<CreateOptionsArgs>,
 ) -> Result<DownloadActionResponse> {
+   let options = options.map(CreateOptions::from).unwrap_or_default();
+
    #[cfg(desktop)]
    {
-      app.download()
-         .create_with_options(&path, &url, options.unwrap_or_default())
+      app.download().create_with_options(&path, &url, options)
    }
    #[cfg(mobile)]
    {
-      app.download()
-         .create(&path, &url, options.unwrap_or_default())
+      app.download().create(&path, &url, options)
    }
 }
 

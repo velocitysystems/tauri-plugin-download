@@ -23,6 +23,7 @@ internal data class DownloadRecord(
    @SerialName("options")
    val options: CreateOptions = CreateOptions(),
 
+   @Required
    @SerialName("receivedBytes")
    val receivedBytes: Long = 0L,
 
@@ -30,6 +31,7 @@ internal data class DownloadRecord(
    @SerialName("totalBytes")
    val totalBytes: Long? = null,
 
+   @Required
    @SerialName("status")
    val status: DownloadStatus = DownloadStatus.Idle,
 ) {

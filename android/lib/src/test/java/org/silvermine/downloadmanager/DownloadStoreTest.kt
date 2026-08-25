@@ -79,12 +79,24 @@ class DownloadStoreTest {
    }
 
    @Test
-   fun `absent byte fields fall back to their defaults`() {
+   fun `a record without received bytes fails to decode`() {
+      // Matches the Rust and Swift records: everything but totalBytes is stated.
+      assertThrows(SerializationException::class.java) {
+         DownloadStore.decodeRecords(
+            """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"status":"idle"}]"""
+         )
+      }
+   }
+
+   @Test
+   fun `an omitted total is decoded as null`() {
+      // totalBytes stays optional on all three platforms: absent means the server
+      // reported no content length.
       val decoded = DownloadStore.decodeRecords(
-         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"status":"idle"}]"""
+         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":7,"status":"idle"}]"""
       )
 
-      assertEquals(0L, decoded.first().receivedBytes)
+      assertEquals(7L, decoded.first().receivedBytes)
       assertNull(decoded.first().totalBytes)
    }
 
@@ -116,18 +128,19 @@ class DownloadStoreTest {
 
    @Test
    fun `a record of every default survives the round trip`() {
-      // The store's Json leaves encodeDefaults off, so a default-valued record
-      // persists as url and path alone — the shape production actually writes.
+      // The store's Json leaves encodeDefaults off, so only @Required properties
+      // survive it — the shape production actually writes. totalBytes is the one
+      // field that may legitimately be absent, so it alone is dropped.
       val record = DownloadRecord(url = "http://example.com/a.mp4", path = "/tmp/a.mp4")
 
       val encoded = DownloadStore.encodeRecords(listOf(record))
       val decoded = DownloadStore.decodeRecords(encoded)
 
-      assertFalse(encoded.contains("receivedBytes"))
-      // options is @Required, so it survives an encoder that drops defaults.
       assertTrue(encoded.contains(""""options":{"allowMetered":true}"""))
+      assertTrue(encoded.contains(""""receivedBytes":0"""))
+      assertTrue(encoded.contains(""""status":"idle"""))
+      assertFalse(encoded.contains("totalBytes"))
       assertEquals(listOf(record), decoded)
-      assertEquals(0L, decoded.first().receivedBytes)
       assertNull(decoded.first().totalBytes)
    }
 }

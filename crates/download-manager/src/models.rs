@@ -9,7 +9,6 @@ use std::fmt;
 #[serde(rename_all = "camelCase")]
 pub struct CreateOptions {
    /// Whether the download may start on metered or constrained connections.
-   #[serde(default = "default_allow_metered")]
    pub allow_metered: bool,
 }
 
@@ -21,10 +20,6 @@ impl Default for CreateOptions {
    }
 }
 
-const fn default_allow_metered() -> bool {
-   true
-}
-
 /// Persisted download record. Stored in `downloads.json`.
 ///
 /// Does not contain `progress` — that is a derived value only present in
@@ -34,11 +29,8 @@ const fn default_allow_metered() -> bool {
 pub(crate) struct DownloadRecord {
    pub url: String,
    pub path: String,
-   #[serde(default)]
    pub options: CreateOptions,
-   #[serde(default)]
    pub received_bytes: u64,
-   #[serde(default)]
    pub total_bytes: Option<u64>,
    pub status: DownloadStatus,
 }
@@ -251,7 +243,7 @@ mod tests {
 
    #[test]
    fn test_deserialize_with_byte_fields() {
-      let json = r#"{"url":"http://example.com/f.mp4","path":"/tmp/f.mp4","receivedBytes":500,"totalBytes":1000,"status":"paused"}"#;
+      let json = r#"{"url":"http://example.com/f.mp4","path":"/tmp/f.mp4","options":{"allowMetered":true},"receivedBytes":500,"totalBytes":1000,"status":"paused"}"#;
       let record: DownloadRecord = serde_json::from_str(json).unwrap();
       assert_eq!(record.received_bytes, 500);
       assert_eq!(record.total_bytes, Some(1000));
@@ -260,21 +252,39 @@ mod tests {
    }
 
    #[test]
-   fn test_deserialize_without_byte_fields() {
-      // Old format without receivedBytes/totalBytes defaults to 0/None
-      let json = r#"{"url":"http://example.com/f.mp4","path":"/tmp/f.mp4","status":"idle"}"#;
+   fn test_deserialize_without_received_bytes_fails() {
+      let json = r#"{"url":"http://example.com/f.mp4","path":"/tmp/f.mp4","options":{"allowMetered":true},"status":"idle"}"#;
+
+      assert!(serde_json::from_str::<DownloadRecord>(json).is_err());
+   }
+
+   #[test]
+   fn test_deserialize_omitted_total_bytes_is_none() {
+      // serde reads an absent Option as None on its own, so totalBytes stays
+      // optional on the wire whatever attributes it carries. Nothing writes a
+      // record without it: None serializes as an explicit null.
+      let json = r#"{"url":"http://example.com/f.mp4","path":"/tmp/f.mp4","options":{"allowMetered":true},"receivedBytes":500,"status":"idle"}"#;
       let record: DownloadRecord = serde_json::from_str(json).unwrap();
-      assert_eq!(record.received_bytes, 0);
+
       assert_eq!(record.total_bytes, None);
-      assert!(record.options.allow_metered);
+      assert_eq!(record.received_bytes, 500);
+   }
+
+   #[test]
+   fn test_deserialize_without_options_fails() {
+      let json = r#"{"url":"http://example.com/f.mp4","path":"/tmp/f.mp4","status":"idle"}"#;
+
+      assert!(serde_json::from_str::<DownloadRecord>(json).is_err());
    }
 
    #[test]
    fn test_create_options_default_allows_metered_connections() {
       assert!(CreateOptions::default().allow_metered);
+   }
 
-      let options: CreateOptions = serde_json::from_str("{}").unwrap();
-      assert!(options.allow_metered);
+   #[test]
+   fn test_create_options_without_allow_metered_fails() {
+      assert!(serde_json::from_str::<CreateOptions>("{}").is_err());
    }
 
    #[test]
