@@ -90,6 +90,20 @@ fun DownloadsScreen(viewModel: DownloadsViewModel = viewModel()) {
             )
          }
 
+         // Fixed on the download at creation. Turn this off and WorkManager holds
+         // the transfer until the device is on an unmetered network.
+         Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(bottom = 8.dp),
+         ) {
+            Text("Allow metered networks")
+            Switch(
+               checked = state.allowMetered,
+               onCheckedChange = viewModel::updateAllowMetered,
+            )
+         }
+
          LazyColumn(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxSize(),
@@ -168,6 +182,12 @@ private fun DownloadRow(
       // total is not always known even while bytes are arriving.
       Text(
          text = "${formatBytes(item.receivedBytes)} / ${item.totalBytes?.let { formatBytes(it) } ?: "unknown"}",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+
+      Text(
+         text = if (item.options.allowMetered) "Metered: allowed" else "Metered: blocked",
          style = MaterialTheme.typography.bodySmall,
          color = MaterialTheme.colorScheme.onSurfaceVariant,
       )

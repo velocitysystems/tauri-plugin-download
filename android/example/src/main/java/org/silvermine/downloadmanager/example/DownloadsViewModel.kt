@@ -3,6 +3,7 @@ package org.silvermine.downloadmanager.example
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import org.silvermine.downloadmanager.CreateOptions
 import org.silvermine.downloadmanager.DownloadItem
 import org.silvermine.downloadmanager.DownloadManager
 import org.silvermine.downloadmanager.DownloadStatus
@@ -15,6 +16,7 @@ import java.io.File
 data class PendingDownload(
    val url: String,
    val path: String,
+   val options: CreateOptions,
 )
 
 data class DownloadsUiState(
@@ -22,6 +24,7 @@ data class DownloadsUiState(
    val pendingDownloads: List<PendingDownload> = emptyList(),
    val downloadURL: String = "",
    val autoCreate: Boolean = true,
+   val allowMetered: Boolean = true,
 )
 
 class DownloadsViewModel(application: Application) : AndroidViewModel(application) {
@@ -53,6 +56,10 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
       _uiState.value = _uiState.value.copy(autoCreate = autoCreate)
    }
 
+   fun updateAllowMetered(allowMetered: Boolean) {
+      _uiState.value = _uiState.value.copy(allowMetered = allowMetered)
+   }
+
    fun getDownload() {
       val state = _uiState.value
       val url = state.downloadURL.trim()
@@ -71,9 +78,11 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
 
       val download = manager.get(path)
 
+      val options = CreateOptions(allowMetered = state.allowMetered)
+
       if (download.status == DownloadStatus.Pending) {
          if (state.autoCreate) {
-            manager.create(path, url)
+            manager.create(path, url, options)
             _uiState.value = _uiState.value.copy(
                downloadURL = "",
                downloads = manager.list(),
@@ -81,7 +90,8 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
          } else {
             _uiState.value = _uiState.value.copy(
                downloadURL = "",
-               pendingDownloads = state.pendingDownloads + PendingDownload(url = url, path = path),
+               pendingDownloads = state.pendingDownloads +
+                  PendingDownload(url = url, path = path, options = options),
             )
          }
       } else {
@@ -90,7 +100,7 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
    }
 
    fun createDownload(pending: PendingDownload) {
-      manager.create(pending.path, pending.url)
+      manager.create(pending.path, pending.url, pending.options)
       _uiState.value = _uiState.value.copy(
          pendingDownloads = _uiState.value.pendingDownloads.filter { it.path != pending.path },
          downloads = manager.list(),

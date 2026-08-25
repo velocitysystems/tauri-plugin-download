@@ -22,6 +22,10 @@
             <input type="checkbox" v-model="autoCreate">
             Auto-create
          </label>
+         <label class="toggle-label">
+            <input type="checkbox" v-model="allowMetered">
+            Allow metered
+         </label>
       </form>
       <!-- Manage Downloads -->
       <div class="download-list">
@@ -39,11 +43,13 @@ import DownloadView from './DownloadView.vue';
 interface DownloadViewItem {
    download: DownloadWithAnyStatus;
    url?: string;
+   allowMetered?: boolean;
 }
 
 const downloadURL = ref(''),
       downloads = ref<DownloadViewItem[]>(),
-      autoCreate = ref(true);
+      autoCreate = ref(true),
+      allowMetered = ref(true);
 
 onMounted(async () => {
    const items = await list();
@@ -59,17 +65,22 @@ async function getDownload() {
       return;
    }
 
-   const path = await join(await appDataDir(), 'downloads', filename);
+   // Captured before the first await: the policy is fixed when the download is
+   // listed, not re-read whenever it is eventually created.
+   const allowMeteredForItem = allowMetered.value,
+         path = await join(await appDataDir(), 'downloads', filename);
 
    let download = await get(path);
 
    if (download.status === DownloadStatus.Pending && autoCreate.value) {
-      const { download: created } = await download.create(downloadURL.value);
+      const { download: created } = await download.create(downloadURL.value, {
+         allowMetered: allowMeteredForItem,
+      });
 
       download = created;
    }
 
-   downloads.value?.push({ download, url: downloadURL.value });
+   downloads.value?.push({ download, url: downloadURL.value, allowMetered: allowMeteredForItem });
    downloadURL.value = '';
 }
 
