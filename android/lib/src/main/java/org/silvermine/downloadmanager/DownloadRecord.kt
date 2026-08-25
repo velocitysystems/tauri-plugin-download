@@ -1,5 +1,6 @@
 package org.silvermine.downloadmanager
 
+import kotlinx.serialization.Required
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -17,6 +18,10 @@ internal data class DownloadRecord(
 
    @SerialName("path")
    val path: String,
+
+   @Required
+   @SerialName("options")
+   val options: CreateOptions = CreateOptions(),
 
    @SerialName("receivedBytes")
    val receivedBytes: Long = 0L,
@@ -58,6 +63,7 @@ internal data class DownloadRecord(
       return DownloadItem(
          url = url,
          path = path,
+         options = options,
          receivedBytes = receivedBytes,
          totalBytes = totalBytes,
          progress = progress,

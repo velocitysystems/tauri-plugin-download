@@ -89,18 +89,26 @@ class DownloadManager private constructor(context: Context) {
    /**
     * Creates a download operation.
     *
+    * Options are fixed on creation: an existing record is returned unchanged,
+    * keeping its original options, as on desktop.
+    *
     * @param path The download path.
     * @param url The download URL for the resource.
+    * @param options Network policy persisted with the download.
     * @return The download action response.
     */
    @Synchronized
-   fun create(path: String, url: String): DownloadActionResponse {
+   fun create(
+      path: String,
+      url: String,
+      options: CreateOptions = CreateOptions(),
+   ): DownloadActionResponse {
       val existing = store.findByPath(path)
       if (existing != null) {
          return DownloadActionResponse.withExpectedStatus(existing.toItem(), DownloadStatus.Idle)
       }
 
-      val record = DownloadRecord(url = url, path = path)
+      val record = DownloadRecord(url = url, path = path, options = options)
       store.append(record)
 
       return DownloadActionResponse.new(emitChanged(record))
@@ -233,12 +241,8 @@ class DownloadManager private constructor(context: Context) {
     * Uses unique work keyed by path to prevent duplicate workers.
     */
    private fun enqueueDownload(record: DownloadRecord) {
-      val constraints = Constraints.Builder()
-         .setRequiredNetworkType(NetworkType.CONNECTED)
-         .build()
-
       val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
-         .setConstraints(constraints)
+         .setConstraints(constraintsFor(record.options))
          .setInputData(
             workDataOf(
                DownloadWorker.KEY_URL to record.url,
@@ -259,14 +263,31 @@ class DownloadManager private constructor(context: Context) {
 
    companion object {
       /**
-       * Decides what a record left `InProgress` with no worker behind it should
-       * become. Returns `null` when the record needs no change.
+       * Builds the work request's constraints from a download's network policy.
        *
-       * A worker can stop without clearing the status — process death, WorkManager
-       * cancelling it, a transient error after its retries. The temp file is the
-       * only honest account of what survived: only bytes flushed to disk are
-       * resumable, whatever the last progress tick reported. With no temp file
-       * there is nothing to resume from, so the download restarts from scratch.
+       * [NetworkType.UNMETERED] holds a restricted download rather than failing it,
+       * and stops then re-runs a worker whose network stops qualifying. That leaves
+       * the record Paused in between (see [DownloadWorker]), so a restricted download
+       * can move between Paused and InProgress without the caller asking.
+       *
+       * Built here rather than inline in [enqueueDownload], which needs a Context and
+       * so cannot be reached from a JVM test.
+       */
+      internal fun constraintsFor(options: CreateOptions): Constraints =
+         Constraints.Builder()
+            .setRequiredNetworkType(
+               if (options.allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED
+            )
+            .build()
+
+      /**
+       * Decides what a record left `InProgress` with no worker behind it should
+       * become, or `null` when it needs no change.
+       *
+       * A worker can stop without clearing the status — process death, cancellation,
+       * a transient error out of retries. The temp file is the only honest account of
+       * what survived: only flushed bytes are resumable, and with none the download
+       * restarts from scratch.
        *
        * Mirrors `Manager::revert_in_progress` in
        * `crates/download-manager/src/manager.rs`, kept pure so it can be tested

@@ -4,8 +4,10 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.serialization.SerializationException
 
 class DownloadRecordTest {
 
@@ -139,6 +141,7 @@ class DownloadRecordTest {
       // field names drifted on both sides together.
       val encoded = """
          {"url":"http://example.com/f.mp4","path":"/tmp/f.mp4",
+         "options":{"allowMetered":true},
          "receivedBytes":500,"totalBytes":1000,"status":"paused"}
       """.trimIndent()
 
@@ -164,6 +167,88 @@ class DownloadRecordTest {
       assertEquals(DownloadStatus.Paused, decoded.status)
       // progress is derived via toItem(), not stored.
       assertEquals(50.0, decoded.toItem().progress, 0.0)
+   }
+
+
+   // -- Network policy --
+
+   @Test
+   fun `an unstated policy allows metered connections`() {
+      // The API default, applied when a caller states no policy. @Required keeps
+      // that default off the wire: a persisted record always states the value.
+      assertTrue(sampleRecord().options.allowMetered)
+      assertTrue(CreateOptions().allowMetered)
+   }
+
+   @Test
+   fun `record without options fails to decode`() {
+      // The policy is decided once, at creation. A record that has lost it cannot
+      // be read back as anything trustworthy, so decoding refuses rather than
+      // assuming the permissive default.
+      val encoded = """
+         {"url":"http://example.com/f.mp4","path":"/tmp/f.mp4",
+         "receivedBytes":0,"totalBytes":null,"status":"idle"}
+      """.trimIndent()
+
+      assertThrows(SerializationException::class.java) {
+         json.decodeFromString(DownloadRecord.serializer(), encoded)
+      }
+   }
+
+   @Test
+   fun `record with empty options fails to decode`() {
+      val encoded = """
+         {"url":"http://example.com/f.mp4","path":"/tmp/f.mp4","options":{},
+         "receivedBytes":0,"totalBytes":null,"status":"idle"}
+      """.trimIndent()
+
+      assertThrows(SerializationException::class.java) {
+         json.decodeFromString(DownloadRecord.serializer(), encoded)
+      }
+   }
+
+   @Test
+   fun `record decodes a restricted policy`() {
+      val encoded = """
+         {"url":"http://example.com/f.mp4","path":"/tmp/f.mp4",
+         "options":{"allowMetered":false},
+         "receivedBytes":0,"totalBytes":null,"status":"idle"}
+      """.trimIndent()
+
+      val record = json.decodeFromString(DownloadRecord.serializer(), encoded)
+
+      assertFalse(record.options.allowMetered)
+   }
+
+   @Test
+   fun `record round trips a restricted policy`() {
+      val record = sampleRecord().copy(options = CreateOptions(allowMetered = false))
+      val decoded = json.decodeFromString(
+         DownloadRecord.serializer(),
+         json.encodeToString(DownloadRecord.serializer(), record),
+      )
+
+      assertFalse(decoded.options.allowMetered)
+   }
+
+   @Test
+   fun `item carries the resolved policy`() {
+      val item = sampleRecord().copy(options = CreateOptions(allowMetered = false)).toItem()
+
+      assertFalse(item.options.allowMetered)
+
+      // The bridge encodes with encodeDefaults = true so allowMetered is explicit
+      // inside the options object rather than left to the TypeScript fallback.
+      val encoded = json.encodeToString(DownloadItem.serializer(), item)
+      assertTrue(encoded.contains("\"options\":{\"allowMetered\":false}"))
+   }
+
+   @Test
+   fun `item always writes the options key`() {
+      // DownloadItem carries no defaults, so every key survives a default encoder.
+      val encoded = defaultJson.encodeToString(DownloadItem.serializer(), sampleRecord().toItem())
+
+      assertTrue(encoded.contains("\"options\""))
    }
 
    // -- Action response --

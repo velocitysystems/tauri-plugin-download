@@ -3,6 +3,7 @@ package org.silvermine.downloadmanager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import kotlinx.serialization.SerializationException
 import org.junit.Test
@@ -30,7 +31,7 @@ class DownloadStoreTest {
    @Test
    fun `decodes persisted records`() {
       val decoded = DownloadStore.decodeRecords(
-         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","receivedBytes":500,"totalBytes":1000,"status":"paused"}]"""
+         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":500,"totalBytes":1000,"status":"paused"}]"""
       )
 
       assertEquals(1, decoded.size)
@@ -51,9 +52,9 @@ class DownloadStoreTest {
       assertThrows(SerializationException::class.java) {
          DownloadStore.decodeRecords(
             """
-            [{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","receivedBytes":1,"status":"paused"},
+            [{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":1,"status":"paused"},
              {"url":"http://example.com/b.mp4","status":"paused"},
-             {"url":"http://example.com/c.mp4","path":"/tmp/c.mp4","receivedBytes":3,"status":"idle"}]
+             {"url":"http://example.com/c.mp4","path":"/tmp/c.mp4","options":{"allowMetered":true},"receivedBytes":3,"status":"idle"}]
             """.trimIndent()
          )
       }
@@ -71,7 +72,7 @@ class DownloadStoreTest {
       // The store's Json is configured with ignoreUnknownKeys, so a field added by
       // a later version does not cost the record.
       val decoded = DownloadStore.decodeRecords(
-         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","receivedBytes":7,"status":"idle","somethingNew":42}]"""
+         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":7,"status":"idle","somethingNew":42}]"""
       )
 
       assertEquals(7L, decoded.first().receivedBytes)
@@ -80,7 +81,7 @@ class DownloadStoreTest {
    @Test
    fun `absent byte fields fall back to their defaults`() {
       val decoded = DownloadStore.decodeRecords(
-         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","status":"idle"}]"""
+         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"status":"idle"}]"""
       )
 
       assertEquals(0L, decoded.first().receivedBytes)
@@ -123,6 +124,8 @@ class DownloadStoreTest {
       val decoded = DownloadStore.decodeRecords(encoded)
 
       assertFalse(encoded.contains("receivedBytes"))
+      // options is @Required, so it survives an encoder that drops defaults.
+      assertTrue(encoded.contains(""""options":{"allowMetered":true}"""))
       assertEquals(listOf(record), decoded)
       assertEquals(0L, decoded.first().receivedBytes)
       assertNull(decoded.first().totalBytes)

@@ -13,8 +13,7 @@ import kotlinx.serialization.Serializable
  * No property carries a default, so every key here is written whatever
  * `encodeDefaults` the caller's `Json` uses, rather than depending on the
  * TypeScript layer to coalesce it (attachDownload in `guest-js/actions.ts`).
- * `options` is the one field of `DownloadState` mobile does not emit — the
- * desktop payload carries it, and the TypeScript layer supplies the default.
+ * [CreateOptions] carries one but marks it `@Required`, so it is written too.
  */
 @Serializable
 data class DownloadItem(
@@ -23,6 +22,10 @@ data class DownloadItem(
 
    @SerialName("path")
    val path: String,
+
+   /** Network policy fixed when this download was created. */
+   @SerialName("options")
+   val options: CreateOptions,
 
    @SerialName("receivedBytes")
    val receivedBytes: Long,

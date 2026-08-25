@@ -1,5 +1,6 @@
 package org.silvermine.downloadmanager
 
+import androidx.work.NetworkType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -57,5 +58,28 @@ class DownloadManagerTest {
          assertNull("$status should not be reverted", DownloadManager.revertInProgress(record, 480L))
          assertNull("$status should not be reverted", DownloadManager.revertInProgress(record, null))
       }
+   }
+
+   // -- Network policy --
+
+   // Building the Constraints outside enqueueDownload() shrinks the untestable surface
+   // to one delegating call. That delegation stays uncovered — enqueueDownload() needs a
+   // Context — so these pin the policy the constraint carries, not that the enqueue path
+   // uses it.
+
+   @Test
+   fun `an unrestricted download only requires a connection`() {
+      assertEquals(
+         NetworkType.CONNECTED,
+         DownloadManager.constraintsFor(CreateOptions(allowMetered = true)).requiredNetworkType,
+      )
+   }
+
+   @Test
+   fun `a restricted download requires an unmetered network`() {
+      assertEquals(
+         NetworkType.UNMETERED,
+         DownloadManager.constraintsFor(CreateOptions(allowMetered = false)).requiredNetworkType,
+      )
    }
 }
