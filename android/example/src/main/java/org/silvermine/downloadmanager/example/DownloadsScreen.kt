@@ -164,6 +164,14 @@ private fun DownloadRow(
          color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
 
+      // A server that omits the content length leaves totalBytes null, so the
+      // total is not always known even while bytes are arriving.
+      Text(
+         text = "${formatBytes(item.receivedBytes)} / ${item.totalBytes?.let { formatBytes(it) } ?: "unknown"}",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+
       Spacer(modifier = Modifier.height(4.dp))
 
       val primaryAction: Pair<String, () -> Unit>? = when (item.status) {
@@ -185,5 +193,24 @@ private fun DownloadRow(
             ) { Text("Cancel") }
          }
       }
+   }
+}
+
+private val BYTE_UNITS = listOf("B", "KB", "MB", "GB", "TB")
+
+/** Formats a byte count for display, e.g. `1.5 MB`. */
+private fun formatBytes(bytes: Long): String {
+   var value = bytes.toDouble()
+   var unitIndex = 0
+
+   while (value >= 1024 && unitIndex < BYTE_UNITS.size - 1) {
+      value /= 1024
+      unitIndex++
+   }
+
+   return if (unitIndex == 0) {
+      "${value.toInt()} ${BYTE_UNITS[unitIndex]}"
+   } else {
+      String.format("%.1f %s", value, BYTE_UNITS[unitIndex])
    }
 }

@@ -4,7 +4,7 @@
 //
 
 /// Represents the various states of a download item.
-public enum DownloadStatus: String, Codable, Sendable {
+public enum DownloadStatus: String, Codable, CaseIterable, Sendable {
    /// Status could not be determined.
    case unknown
    /// Download has not yet been created/persisted.

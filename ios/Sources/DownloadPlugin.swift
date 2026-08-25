@@ -22,7 +22,7 @@ class DownloadPlugin: Plugin {
           for await download in DownloadManager.shared.changed {
              try? self.trigger("changed", data: download);
 #if DEBUG
-             Logger.debug("[\(download.path)] \(download.status) - \(String(format: "%.0f", download.progress))%")
+             Logger.debug("[\(download.path.lastPathComponent)] \(download.status) - \(String(format: "%.0f", download.progress))% (\(download.receivedBytes)/\(download.totalBytes.map { String($0) } ?? "unknown") bytes)")
 #endif
           }
       }

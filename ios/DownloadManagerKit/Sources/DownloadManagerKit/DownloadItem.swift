@@ -5,34 +5,58 @@
 
 import Foundation
 
-/// A value type that represents an item to be downloaded.
-/// Used to track the status and progress of a download operation.
-public struct DownloadItem: Identifiable, Codable, Sendable {
+/// Emit-only payload sent to the frontend. Built from a [`DownloadRecord`] with
+/// `progress` derived from `receivedBytes` / `totalBytes`; never persisted and
+/// never decoded, so internal state such as the resume-data path stays out of
+/// the frontend contract. `totalBytes` is nil when the server supplied no
+/// content length, and encodes as an explicit JSON `null`.
+public struct DownloadItem: Identifiable, Encodable, Sendable {
    public var id: URL { path }
    
    public let url: URL
    public let path: URL
-   public private(set) var progress: Double
-   public private(set) var status: DownloadStatus
-   public var resumeDataPath: URL?
-   
-   init(url: URL, path: URL, progress: Double = 0.0, status: DownloadStatus = .idle, resumeDataPath: URL? = nil) {
+   public let receivedBytes: UInt64
+   public let totalBytes: UInt64?
+   public let progress: Double
+   public let status: DownloadStatus
+
+   init(
+      url: URL,
+      path: URL,
+      receivedBytes: UInt64,
+      totalBytes: UInt64?,
+      progress: Double,
+      status: DownloadStatus
+   ) {
       self.url = url
       self.path = path
+      self.receivedBytes = receivedBytes
+      self.totalBytes = totalBytes
       self.progress = progress
       self.status = status
-      self.resumeDataPath = resumeDataPath
    }
    
-   public mutating func setProgress(_ progress: Double) {
-      self.progress = progress
+   enum CodingKeys: String, CodingKey {
+      case url, path, receivedBytes, totalBytes, progress, status
    }
    
-   public mutating func setResumeDataPath(_ resumeDataPath: URL?) {
-      self.resumeDataPath = resumeDataPath
-   }
-   
-   public mutating func setStatus(_ status: DownloadStatus) {
-      self.status = status
+   public func encode(to encoder: Encoder) throws {
+      var container = encoder.container(keyedBy: CodingKeys.self)
+
+      try container.encode(url, forKey: .url)
+      try container.encode(path, forKey: .path)
+      try container.encode(receivedBytes, forKey: .receivedBytes)
+      try container.encode(progress, forKey: .progress)
+      try container.encode(status, forKey: .status)
+
+      // The synthesized encoding would use encodeIfPresent and omit the key. The
+      // TypeScript layer coalesces a missing key to null anyway (attachDownload in
+      // guest-js/actions.ts), so this is not load-bearing for the plugin — it keeps
+      // the payload self-describing for anything reading DownloadManagerKit directly.
+      if let totalBytes = totalBytes {
+         try container.encode(totalBytes, forKey: .totalBytes)
+      } else {
+         try container.encodeNil(forKey: .totalBytes)
+      }
    }
 }

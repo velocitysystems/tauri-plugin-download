@@ -24,6 +24,7 @@ function buildConfig(input, output) {
          typescript({
             declaration: true,
             declarationDir: dirname(output.import),
+            exclude: [ '**/*.test.ts' ],
          }),
       ],
       external: [

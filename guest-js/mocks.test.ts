@@ -283,7 +283,7 @@ describe('mockDownloadPlugin', () => {
 
       const expectedStatus = getExpectedStatus(action);
 
-      const isAllowed = allowedActions[status].includes(action);
+      const isAllowed = (allowedActions[status] as readonly DownloadAction[]).includes(action);
 
       const expectedResultStatus = isAllowed ? expectedStatus : status;
 
