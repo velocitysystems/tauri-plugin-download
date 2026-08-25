@@ -15,6 +15,7 @@ public struct DownloadItem: Identifiable, Encodable, Sendable {
    
    public let url: URL
    public let path: URL
+   public let options: CreateOptions
    public let receivedBytes: UInt64
    public let totalBytes: UInt64?
    public let progress: Double
@@ -23,6 +24,7 @@ public struct DownloadItem: Identifiable, Encodable, Sendable {
    init(
       url: URL,
       path: URL,
+      options: CreateOptions,
       receivedBytes: UInt64,
       totalBytes: UInt64?,
       progress: Double,
@@ -30,6 +32,7 @@ public struct DownloadItem: Identifiable, Encodable, Sendable {
    ) {
       self.url = url
       self.path = path
+      self.options = options
       self.receivedBytes = receivedBytes
       self.totalBytes = totalBytes
       self.progress = progress
@@ -37,7 +40,7 @@ public struct DownloadItem: Identifiable, Encodable, Sendable {
    }
    
    enum CodingKeys: String, CodingKey {
-      case url, path, receivedBytes, totalBytes, progress, status
+      case url, path, options, receivedBytes, totalBytes, progress, status
    }
    
    public func encode(to encoder: Encoder) throws {
@@ -45,6 +48,7 @@ public struct DownloadItem: Identifiable, Encodable, Sendable {
 
       try container.encode(url, forKey: .url)
       try container.encode(path, forKey: .path)
+      try container.encode(options, forKey: .options)
       try container.encode(receivedBytes, forKey: .receivedBytes)
       try container.encode(progress, forKey: .progress)
       try container.encode(status, forKey: .status)

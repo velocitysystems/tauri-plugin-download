@@ -100,19 +100,27 @@ public final class DownloadManager: NSObject {
    /**
     Creates a download operation.
 
+    Options are fixed on creation: an existing record is returned unchanged,
+    keeping its original options, as on desktop.
+
     - Parameters:
       - path: The download path.
       - url: The download URL for the resource.
+      - options: Network policy persisted with the download.
     - Returns: The download operation.
     */
-   public func create(path: URL, url: URL) async -> DownloadActionResponse {
+   public func create(
+      path: URL,
+      url: URL,
+      options: CreateOptions = CreateOptions()
+   ) async -> DownloadActionResponse {
       await ensureReconciled()
 
       if let existing = await store.findByPath(path) {
          return DownloadActionResponse(download: existing.toItem(), expectedStatus: .idle)
       }
 
-      let record = DownloadRecord(url: url, path: path)
+      let record = DownloadRecord(url: url, path: path, options: options)
       await store.append(record)
       let item = await emitChanged(record)
       
@@ -142,7 +150,7 @@ public final class DownloadManager: NSObject {
       record.setStatus(.inProgress)
       await store.update(record)
 
-      let task = session.downloadTask(with: record.url)
+      let task = session.downloadTask(with: Self.request(for: record))
       task.taskDescription = path.path
       task.resume()
       
@@ -180,6 +188,10 @@ public final class DownloadManager: NSObject {
       let task: URLSessionDownloadTask
 
       if let resumeData, !resumeData.isEmpty {
+         // The one task this manager creates without building the request: resume
+         // data carries the original NSURLRequest, so the policy set by request(for:)
+         // at start() survives. Confirmed on device, but Apple does not document
+         // resume data as preserving request properties — re-check on new iOS majors.
          task = session.downloadTask(withResumeData: resumeData)
       } else {
          os_log(.info, log: Log.downloadManager,
@@ -192,7 +204,7 @@ public final class DownloadManager: NSObject {
          record.setBytes(received: 0, total: record.totalBytes)
          await store.update(record)
 
-         task = session.downloadTask(with: record.url)
+         task = session.downloadTask(with: Self.request(for: record))
       }
 
       task.taskDescription = path.path
@@ -458,6 +470,32 @@ public final class DownloadManager: NSObject {
 
    private func ensureReconciled() async {
       await reconcileTask?.value
+   }
+
+   /// Builds the request a download's task runs on, applying the record's network
+   /// policy.
+   ///
+   /// The policy is per-request rather than per-session because one background
+   /// session is shared by every download. Its configuration stays permissive and
+   /// the effective policy is the intersection of the two, so restricting here is
+   /// what makes the option per-download.
+   ///
+   /// A restricted task is not rejected: a background session waits for a path
+   /// that satisfies the request and starts transferring once one appears.
+   /// Desktop, having no such scheduler, rejects `start()`/`resume()` instead.
+   static func request(for record: DownloadRecord) -> URLRequest {
+      var request = URLRequest(url: record.url)
+      let allowMetered = record.options.allowMetered
+
+      // allowsExpensiveNetworkAccess covers cellular and personal hotspots;
+      // allowsConstrainedNetworkAccess covers Low Data Mode. Together with
+      // allowsCellularAccess they match the desktop check, which rejects a
+      // connection reported as either metered or constrained.
+      request.allowsCellularAccess = allowMetered
+      request.allowsExpensiveNetworkAccess = allowMetered
+      request.allowsConstrainedNetworkAccess = allowMetered
+
+      return request
    }
 
    /// Decides what a record left `inProgress` with no task behind it should become.

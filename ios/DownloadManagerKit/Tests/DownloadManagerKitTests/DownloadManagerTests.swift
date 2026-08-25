@@ -130,4 +130,35 @@ final class DownloadManagerTests: XCTestCase {
 
       return url
    }
+
+   // MARK: - Network policy
+
+   private func idleRecord(allowMetered: Bool) -> DownloadRecord {
+      return DownloadRecord(
+         url: URL(string: "http://example.com/file.mp4")!,
+         path: URL(fileURLWithPath: "/tmp/file.mp4"),
+         options: CreateOptions(allowMetered: allowMetered)
+      )
+   }
+
+   func testUnrestrictedRequestLeavesEveryPathAllowed() {
+      let request = DownloadManager.request(for: idleRecord(allowMetered: true))
+
+      XCTAssertEqual(request.url, URL(string: "http://example.com/file.mp4"))
+      XCTAssertTrue(request.allowsCellularAccess)
+      XCTAssertTrue(request.allowsExpensiveNetworkAccess)
+      XCTAssertTrue(request.allowsConstrainedNetworkAccess)
+   }
+
+   func testRestrictedRequestRefusesMeteredAndConstrainedPaths() {
+      // All three, not just allowsCellularAccess: expensive covers personal
+      // hotspots and constrained covers Low Data Mode, which together match the
+      // desktop check that rejects a metered *or* constrained connection.
+      let request = DownloadManager.request(for: idleRecord(allowMetered: false))
+
+      XCTAssertEqual(request.url, URL(string: "http://example.com/file.mp4"))
+      XCTAssertFalse(request.allowsCellularAccess)
+      XCTAssertFalse(request.allowsExpensiveNetworkAccess)
+      XCTAssertFalse(request.allowsConstrainedNetworkAccess)
+   }
 }

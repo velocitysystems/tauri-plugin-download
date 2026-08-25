@@ -16,6 +16,7 @@ struct DownloadRecord: Identifiable, Codable, Sendable {
 
    let url: URL
    let path: URL
+   let options: CreateOptions
    private(set) var receivedBytes: UInt64
    private(set) var totalBytes: UInt64?
    private(set) var status: DownloadStatus
@@ -24,6 +25,7 @@ struct DownloadRecord: Identifiable, Codable, Sendable {
    init(
       url: URL,
       path: URL,
+      options: CreateOptions = CreateOptions(),
       receivedBytes: UInt64 = 0,
       totalBytes: UInt64? = nil,
       status: DownloadStatus = .idle,
@@ -31,6 +33,7 @@ struct DownloadRecord: Identifiable, Codable, Sendable {
    ) {
       self.url = url
       self.path = path
+      self.options = options
       self.receivedBytes = receivedBytes
       self.totalBytes = totalBytes
       self.status = status
@@ -73,6 +76,7 @@ struct DownloadRecord: Identifiable, Codable, Sendable {
       return DownloadItem(
          url: url,
          path: path,
+         options: options,
          receivedBytes: receivedBytes,
          totalBytes: totalBytes,
          progress: progress,

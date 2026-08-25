@@ -10,6 +10,7 @@ class PathArgs: Decodable {
 class CreateArgs: Decodable {
    let path: String
    let url: String
+   let options: CreateOptions
 }
 
 class DownloadPlugin: Plugin {
@@ -49,7 +50,11 @@ class DownloadPlugin: Plugin {
       let path = try parsePath(args.path)
       let url = try parseURL(args.url)
       Task {
-         let response = await self.downloadManager.create(path: path, url: url)
+         let response = await self.downloadManager.create(
+            path: path,
+            url: url,
+            options: args.options
+         )
          invoke.resolve(response)
       }
    }
