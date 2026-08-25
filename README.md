@@ -186,8 +186,7 @@ async function manageDownload() {
 }
 ```
 
-On desktop, a download can be restricted to unmetered, unconstrained networks when it
-is created:
+A download can be restricted to unmetered, unconstrained networks when it is created:
 
 ```ts
 const download = await get('/path/to/large-file.zip');
@@ -202,12 +201,37 @@ if (download.status === DownloadStatus.Pending) {
 }
 ```
 
-`allowMetered` defaults to `true`. When it is `false`, both `start()` and `resume()`
-reject if there is no active connection, connectivity cannot be determined, or the
-current connection is reported as metered or constrained. The stored download remains
-idle or paused so the action can be retried later. A connection change does not stop a
-download that is already in progress. Android and iOS currently accept this option but
-do not enforce it.
+`allowMetered` defaults to `true`. When it is `false`, the download is confined to
+connections the platform reports as unmetered — no cellular, no personal hotspot.
+Desktop and iOS also exclude constrained connections (Low Data Mode on iOS); Android
+has no equivalent, so there the option maps to WorkManager's unmetered constraint
+alone.
+
+Only mobile has an OS scheduler to defer to, so desktop refuses where mobile waits:
+
+| | No eligible network at `start()`/`resume()` | Network stops qualifying mid-transfer |
+| --- | --- | --- |
+| Desktop | Rejects; the download stays `Idle` or `Paused` to retry later. | Keeps running. |
+| iOS | Resolves, status `InProgress`; the background `URLSession` task waits, transferring nothing. | Stalls, then continues on its own. |
+| Android | Resolves, status `InProgress`; WorkManager holds the work request. | Stops. Whether it resumes on its own is a race — see below. |
+
+Android is the row to plan for. Two paths can observe the network change, and they
+differ in the one way that matters:
+
+   * WorkManager's constraint tracker stops the worker — it re-runs by itself once the
+     network qualifies again.
+   * The connection drops out from under the transfer first — the worker reports
+     failure, WorkManager does not retry, and the download waits for a `resume()`.
+
+Both revert to `Paused`, or to `Idle` if nothing had reached disk yet. So a restricted
+download may move between `Paused` and `InProgress` with no call from you, and may
+equally sit there waiting for one: never read `Paused` as "the user paused it", and
+never rely on an automatic resume.
+
+> Resuming an iOS download goes through `downloadTask(withResumeData:)`, which takes no
+> request, so the policy is inherited from the original task rather than reapplied. That
+> it survives is confirmed on device, but Apple does not document resume data as carrying
+> request properties — worth re-checking against new iOS releases.
 
 The network policy is fixed when the download is first created. Every download state
 exposes its resolved policy through `download.options.allowMetered`. Calling `create()`

@@ -28,8 +28,8 @@ pub(crate) async fn create<R: Runtime>(
    }
    #[cfg(mobile)]
    {
-      let _ = options;
-      app.download().create(&path, &url)
+      app.download()
+         .create(&path, &url, options.unwrap_or_default())
    }
 }
 

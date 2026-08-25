@@ -90,10 +90,16 @@ impl<R: Runtime> Download<R> {
    /// # Arguments
    /// - `path` - The download path.
    /// - `url` - The download URL for the resource.
+   /// - `options` - Network policy persisted with the download.
    ///
    /// # Returns
    /// The download operation.
-   pub fn create(&self, path: &str, url: &str) -> crate::Result<DownloadActionResponse> {
+   pub fn create(
+      &self,
+      path: &str,
+      url: &str,
+      options: CreateOptions,
+   ) -> crate::Result<DownloadActionResponse> {
       self
          .0
          .run_mobile_plugin(
@@ -101,6 +107,7 @@ impl<R: Runtime> Download<R> {
             CreateArgs {
                path: path.to_string(),
                url: url.to_string(),
+               options,
             },
          )
          .map_err(Into::into)

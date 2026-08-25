@@ -7,25 +7,10 @@ pub use download_manager::{CreateOptions, DownloadActionResponse, DownloadItem};
 mod mobile_types {
    use serde::{Deserialize, Serialize};
 
-   /// Options fixed when a download is created.
-   #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-   #[serde(rename_all = "camelCase")]
-   pub struct CreateOptions {
-      #[serde(default = "default_allow_metered")]
-      pub allow_metered: bool,
-   }
-
-   impl Default for CreateOptions {
-      fn default() -> Self {
-         Self {
-            allow_metered: true,
-         }
-      }
-   }
-
-   const fn default_allow_metered() -> bool {
-      true
-   }
+   /// Shared with desktop rather than mirrored. The type sits on the bridge in both
+   /// directions now, and a second definition of it — with its own copy of the
+   /// default — could drift without the compiler, the tests, or CI noticing.
+   pub use download_manager::CreateOptions;
 
    #[derive(Serialize)]
    #[serde(rename_all = "camelCase")]
@@ -38,6 +23,7 @@ mod mobile_types {
    pub struct CreateArgs {
       pub path: String,
       pub url: String,
+      pub options: CreateOptions,
    }
 
    #[derive(Debug, Clone, Default, Deserialize, Serialize)]
