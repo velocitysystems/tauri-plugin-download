@@ -1,6 +1,9 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+use tempfile::NamedTempFile;
 
 use crate::Error;
 use crate::models::{DownloadRecord, DownloadStatus};
@@ -154,18 +157,51 @@ impl DownloadStore {
 /// Accepts `&StoreInner` directly rather than `&self` because callers already hold the
 /// `MutexGuard` when they call this. Taking `&self` would attempt to re-acquire the lock
 /// on the same thread, causing a deadlock since `Mutex` is not re-entrant.
+///
+/// Writes atomically, as iOS and Android do, so a crash mid-write leaves the previous store
+/// intact rather than truncated JSON. Two consequences: the store takes the temp file's
+/// `0600` on Unix, leaving it app-private as it is on mobile, and the directory is not
+/// fsynced, so a power loss can cost the last update but never the file.
 fn save_inner(inner: &StoreInner) -> crate::Result<()> {
-   if let Some(parent) = Path::new(&inner.path).parent()
-      && !parent.exists()
-   {
-      fs::create_dir_all(parent)
-         .map_err(|e| Error::Store(format!("Failed to create store directory: {}", e)))?;
-   }
+   let parent = inner
+      .path
+      .parent()
+      .ok_or_else(|| Error::Store("Store path has no parent directory".to_string()))?;
 
+   fs::create_dir_all(parent)
+      .map_err(|e| Error::Store(format!("Failed to create store directory: {}", e)))?;
+
+   // Serialize before touching the disk so a failure here cannot leave a temp file behind.
    let data = serde_json::to_vec(&inner.downloads)
       .map_err(|e| Error::Store(format!("Failed to serialize store: {}", e)))?;
-   fs::write(&inner.path, &data)
+
+   // The temp file has to be a sibling of the store: `rename` cannot cross a mount point.
+   // `NamedTempFile` removes itself on drop, so the early returns below leave no debris.
+   let mut temp = NamedTempFile::new_in(parent)
+      .map_err(|e| Error::Store(format!("Failed to create temp store file: {}", e)))?;
+
+   temp
+      .write_all(&data)
       .map_err(|e| Error::Store(format!("Failed to write store: {}", e)))?;
+
+   // Sync before the rename, as Android's `AtomicFile.finishWrite` does. `flush` would be
+   // a no-op — the writes are unbuffered — and the rename only publishes a directory entry,
+   // so without this a crash can leave a correctly named file whose contents never landed.
+   temp.as_file().sync_all().map_err(|e| {
+      Error::Store(format!(
+         "Failed to sync store to disk: {} at path {:?}",
+         e,
+         temp.path()
+      ))
+   })?;
+
+   temp.persist(&inner.path).map_err(|e| {
+      Error::Store(format!(
+         "Failed to replace store: {} at path {:?}",
+         e.error, inner.path
+      ))
+   })?;
+
    Ok(())
 }
 
@@ -433,5 +469,56 @@ mod tests {
       let store = DownloadStore::new(dir.path().join("nested/dir/downloads.json"));
       store.create(sample_record("/tmp/file.mp4")).unwrap();
       assert!(dir.path().join("nested/dir/downloads.json").exists());
+   }
+
+   /// The temp file is removed on drop, so an early return between creating it and
+   /// renaming it into place leaves no debris. A directory at the destination makes the
+   /// rename fail, which is the only publish error reachable without fault injection.
+   #[test]
+   fn test_failed_save_leaves_no_temp_files() {
+      let dir = TempDir::new().unwrap();
+      let path = dir.path().join("downloads.json");
+      fs::create_dir(&path).unwrap();
+      let store = DownloadStore::new(path);
+
+      assert!(store.create(sample_record("/tmp/file.mp4")).is_err());
+
+      let entries: Vec<_> = fs::read_dir(dir.path())
+         .unwrap()
+         .map(|entry| entry.unwrap().file_name())
+         .collect();
+      assert_eq!(entries, vec!["downloads.json"]);
+   }
+
+   #[test]
+   fn test_save_leaves_no_temp_files() {
+      let (store, dir) = temp_store();
+      store.create(sample_record("/tmp/file.mp4")).unwrap();
+      store.delete("/tmp/file.mp4").unwrap();
+
+      let entries: Vec<_> = fs::read_dir(dir.path())
+         .unwrap()
+         .map(|entry| entry.unwrap().file_name())
+         .collect();
+      assert_eq!(entries, vec!["downloads.json"]);
+   }
+
+   /// The store is published by renaming a temp file over it, so each save replaces the
+   /// file rather than rewriting it. An in-place write would keep the same inode.
+   #[cfg(unix)]
+   #[test]
+   fn test_save_replaces_rather_than_rewriting_in_place() {
+      use std::os::unix::fs::MetadataExt;
+
+      let (store, dir) = temp_store();
+      let path = dir.path().join("downloads.json");
+
+      store.create(sample_record("/tmp/file.mp4")).unwrap();
+      let first = fs::metadata(&path).unwrap().ino();
+
+      store.create(sample_record("/tmp/other.mp4")).unwrap();
+      let second = fs::metadata(&path).unwrap().ino();
+
+      assert_ne!(first, second);
    }
 }
