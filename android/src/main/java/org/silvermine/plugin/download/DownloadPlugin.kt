@@ -9,6 +9,7 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import org.silvermine.downloadmanager.CreateOptions
 import org.silvermine.downloadmanager.DownloadManager
 import org.silvermine.downloadmanager.parsePath
 import org.silvermine.downloadmanager.parseURI
@@ -28,10 +29,23 @@ class PathArgs {
    var path: String? = null
 }
 
+/**
+ * Bridge-local mirror of [CreateOptions], kept separate so Tauri's `@InvokeArg`
+ * reflection and kotlinx.serialization never share a type.
+ *
+ * Nullable so an absent value is rejected rather than defaulted. The Rust bridge
+ * resolves the API default before invoking, so the policy always arrives stated.
+ */
+@InvokeArg
+class CreateOptionsArgs {
+   var allowMetered: Boolean? = null
+}
+
 @InvokeArg
 class CreateArgs {
    var path: String? = null
    var url: String? = null
+   var options: CreateOptionsArgs? = null
 }
 
 @TauriPlugin
@@ -108,8 +122,17 @@ class DownloadPlugin(activity: Activity) : Plugin(activity) {
       } catch (e: Exception) {
          return invoke.reject(e.message)
       }
+      val options = try {
+         CreateOptions(
+            allowMetered = args.options?.allowMetered
+               ?: throw IllegalArgumentException("Missing required argument: options.allowMetered"),
+         )
+      } catch (e: Exception) {
+         return invoke.reject(e.message)
+      }
+
       scope.launch {
-         val response = withContext(Dispatchers.IO) { downloadManager.create(path, url) }
+         val response = withContext(Dispatchers.IO) { downloadManager.create(path, url, options) }
          invoke.resolve(JSObject(json.encodeToString(response)))
       }
    }

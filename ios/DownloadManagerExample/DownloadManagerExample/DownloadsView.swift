@@ -10,6 +10,7 @@ struct PendingDownload: Identifiable {
    var id: String { path.path }
    let url: URL
    let path: URL
+   let options: CreateOptions
 }
 
 struct DownloadsView: View {
@@ -17,6 +18,7 @@ struct DownloadsView: View {
    @State private var downloads: [DownloadItem] = []
    @State private var downloadURL: String = ""
    @State private var autoCreate: Bool = true
+   @State private var allowMetered: Bool = true
    @State private var pendingDownloads: [PendingDownload] = []
 
    var body: some View {
@@ -47,6 +49,12 @@ struct DownloadsView: View {
             .padding(.horizontal)
             
             Toggle("Auto-create", isOn: $autoCreate)
+               .padding(.horizontal)
+
+            // Fixed on the download at creation. Turn this off and the transfer is
+            // confined to unmetered, unconstrained networks — toggling Low Data Mode
+            // on the current Wi-Fi network is the cheapest way to exercise it.
+            Toggle("Allow metered networks", isOn: $allowMetered)
                .padding(.horizontal)
 
             List {
@@ -81,14 +89,18 @@ struct DownloadsView: View {
       let filename = url.lastPathComponent
       let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(filename)
       
+      // Read before the suspension point: the policy is fixed when the download is
+      // listed, not re-read whenever the task resumes.
+      let options = CreateOptions(allowMetered: allowMetered)
+
       Task {
          let download = await manager.get(path: path)
          
          if download.status == .pending {
             if autoCreate {
-               _ = await manager.create(path: path, url: url)
+               _ = await manager.create(path: path, url: url, options: options)
             } else {
-               pendingDownloads.append(PendingDownload(url: url, path: path))
+               pendingDownloads.append(PendingDownload(url: url, path: path, options: options))
             }
          }
       }
@@ -112,7 +124,7 @@ struct PendingDownloadRowView: View {
          
          Button(action: {
             Task {
-               _ = await manager.create(path: pending.path, url: pending.url)
+               _ = await manager.create(path: pending.path, url: pending.url, options: pending.options)
                onCreated()
             }
          }) {
@@ -152,6 +164,9 @@ struct DownloadRowView: View {
          Text(byteCount)
             .font(.caption)
             .foregroundColor(.secondary)
+         Text(item.options.allowMetered ? "Metered: allowed" : "Metered: blocked")
+            .font(.caption)
+            .foregroundColor(item.options.allowMetered ? .secondary : .orange)
          
          switch item.status {
          case .idle:

@@ -90,11 +90,11 @@ export interface ListenOptions {
 export interface CreateOptions {
 
    /**
-    * Whether the download may start or resume on metered or constrained
-    * connections. Defaults to `true`.
+    * Whether the download may transfer on metered or constrained connections.
+    * Defaults to `true`; the resolved value is on `download.options.allowMetered`.
     *
-    * The resolved value is exposed through `download.options.allowMetered`.
-    * This option is currently enforced on desktop only.
+    * With no eligible network, desktop rejects `start()` and `resume()` while iOS
+    * and Android accept the call and hold the transfer. See the README.
     */
    allowMetered?: boolean;
 }

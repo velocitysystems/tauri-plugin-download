@@ -186,8 +186,7 @@ async function manageDownload() {
 }
 ```
 
-On desktop, a download can be restricted to unmetered, unconstrained networks when it
-is created:
+A download can be restricted to unmetered, unconstrained networks when it is created:
 
 ```ts
 const download = await get('/path/to/large-file.zip');
@@ -202,12 +201,47 @@ if (download.status === DownloadStatus.Pending) {
 }
 ```
 
-`allowMetered` defaults to `true`. When it is `false`, both `start()` and `resume()`
-reject if there is no active connection, connectivity cannot be determined, or the
-current connection is reported as metered or constrained. The stored download remains
-idle or paused so the action can be retried later. A connection change does not stop a
-download that is already in progress. Android and iOS currently accept this option but
-do not enforce it.
+`allowMetered` defaults to `true`. When it is `false`, the download is confined to
+connections the platform reports as unmetered — no cellular, no personal hotspot.
+Desktop and iOS also exclude constrained connections (Low Data Mode on iOS); Android
+has no equivalent, so there the option maps to WorkManager's unmetered constraint
+alone.
+
+Only mobile has an OS scheduler to defer to, so desktop refuses where mobile waits:
+
+| | No eligible network at `start()`/`resume()` | Network stops qualifying mid-transfer |
+| --- | --- | --- |
+| Desktop | Rejects; the download stays `Idle` or `Paused` to retry later. | Keeps running. |
+| iOS | Resolves, status `InProgress`; the background `URLSession` task waits, transferring nothing. | Stalls, then continues on its own. |
+| Android | Resolves, status `InProgress`; WorkManager holds the work request. | Stalls, then continues on its own — see below. |
+
+Neither platform needs a call from you to recover, but they differ. iOS leaves the task
+alone and it continues when a network satisfies it. Android's worker cannot survive the
+connection going away, so WorkManager retries it on the same constraint, resuming from
+the partial file — expect it to lag by the backoff delay rather than restarting the
+moment the network qualifies.
+
+Two caveats on Android. If the constraint tracker stops the worker before the connection
+drops — the two race — the download reports `Paused` before the retry moves it back to
+`InProgress`.
+
+The same happens while work is merely waiting, which is ordinary rather than a race: a
+record held on the unmetered constraint or in a retry backoff stays `InProgress` with no
+worker running. Restart the app then and the plugin reconciles it to `Paused`, or `Idle`
+at zero bytes when no partial file survives, before the pending work moves it back.
+Reconciliation emits no event, so the stale value arrives through the next `get()` or
+`list()`.
+
+So treat `Paused` and `Idle` as "not currently transferring" rather than "waiting for the
+user", and drive recovery off events. No bytes are lost either way. Constraint holds are
+not time-limited; transient errors are. A download gives up after at most five retries —
+fewer if constraint interruptions have spent part of the same budget — then needs
+`resume()`, or `start()` if it reconciled to `Idle`.
+
+> Resuming an iOS download goes through `downloadTask(withResumeData:)`, which takes no
+> request, so the policy is inherited from the original task rather than reapplied. That
+> it survives is confirmed on device, but Apple does not document resume data as carrying
+> request properties — worth re-checking against new iOS releases.
 
 The network policy is fixed when the download is first created. Every download state
 exposes its resolved policy through `download.options.allowMetered`. Calling `create()`
@@ -373,6 +407,18 @@ The `android/` directory is a 3-module Gradle build:
 Open the `android/` directory in Android Studio, select the `:example` run configuration,
 and run on an emulator or device.
 
+### Testing the Network Policy
+
+No SIM is needed: mark the Wi-Fi network as metered from its settings page — under
+Network & internet on stock Android, Connections on One UI — where the option reads
+"Treat as metered" or "Metered". The
+example app's "Allow metered networks" toggle sets `allowMetered` on the downloads it
+creates, and each row shows the policy it was created with.
+
+With the toggle off, a download started on a metered network holds at zero bytes and
+begins once the network is marked unmetered. Marking the network metered mid-transfer
+stalls it, and it continues by itself a backoff delay later.
+
 ## iOS Support
 
 On iOS, this plugin uses `URLSession` with a background configuration, which allows
@@ -391,6 +437,23 @@ to continue even when the app is suspended or terminated by the system.
 
 Open `ios/DownloadManagerExample/DownloadManagerExample.xcodeproj` in Xcode,
 select a simulator or device, and run.
+
+### Testing the Network Policy
+
+No SIM is needed, but a real device is: Low Data Mode cannot be set on a simulator.
+Toggle it under Settings → Wi-Fi → the ⓘ beside your network → Low Data Mode, which
+trips `allowsConstrainedNetworkAccess`. The example app's "Allow metered networks"
+toggle sets `allowMetered` on the downloads it creates, and each row shows the policy
+it was created with.
+
+With the toggle off, a download started in Low Data Mode holds at zero bytes and
+begins once Low Data Mode is off. Turning it on mid-transfer stalls the download
+without leaving `inProgress`, and it continues by itself once it is off again.
+
+Worth repeating on new iOS majors: pause a restricted download, turn Low Data Mode on,
+then resume. It should stay stalled. Resuming goes through
+`downloadTask(withResumeData:)`, which carries the policy in undocumented resume data,
+so this is the check that catches a silent regression there.
 
 ### Tauri Apps
 

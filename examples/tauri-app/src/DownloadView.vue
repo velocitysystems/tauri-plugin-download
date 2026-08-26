@@ -17,6 +17,9 @@
       <div class="item-info">
          <p class="state-text">State: {{ currentDownload.status }}</p>
          <p class="byte-text">{{ byteCount }}</p>
+         <p class="metered-text" v-if="currentDownload.status !== DownloadStatus.Pending">
+            Metered: {{ currentDownload.options.allowMetered ? 'allowed' : 'blocked' }}
+         </p>
          <p class="progress-text">{{ Math.round(currentDownload.progress) }}%</p>
       </div>
    </div>
@@ -36,7 +39,7 @@ import {
 } from 'tauri-plugin-download';
 import { UnlistenFn } from '@tauri-apps/api/event';
 
-const props = defineProps<{ download: DownloadWithAnyStatus, url?: string }>(),
+const props = defineProps<{ download: DownloadWithAnyStatus, url?: string, allowMetered?: boolean }>(),
       currentDownload = ref<DownloadWithAnyStatus>(props.download),
       showActions = computed(() => { return hasAnyAction(currentDownload.value); }),
       canCreate = computed(() => { return hasAction(currentDownload.value, DownloadAction.Create); }),
@@ -150,7 +153,9 @@ async function doCreate(): Promise<void> {
       return;
    }
 
-   const result = await currentDownload.value.create(props.url);
+   const result = await currentDownload.value.create(props.url, {
+      allowMetered: props.allowMetered ?? true,
+   });
 
    currentDownload.value = result.download;
 

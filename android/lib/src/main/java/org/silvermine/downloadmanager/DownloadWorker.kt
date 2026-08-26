@@ -247,7 +247,7 @@ internal class DownloadWorker(
 
    /**
     * Reverts a record still marked InProgress when this worker stops early —
-    * either stopped externally, or out of retries on a transient error.
+    * either stopped externally, or out of WorkManager attempts on a transient error.
     *
     * A pause cancels the WorkManager work and sets the record to Paused, but the
     * worker may already have written InProgress back before observing isStopped.
@@ -293,17 +293,28 @@ internal class DownloadWorker(
 
    /**
     * Handles transient failures (network drops, timeouts that exhausted retries).
-    * Preserves the temp file and transitions to Paused so the download can be
-    * resumed later via Range headers. Mirrors iOS behavior where URLSession saves
-    * resume data for transient errors.
+    * Preserves the temp file and retries, resuming via Range headers once the work's
+    * constraints allow.
+    *
+    * The record stays InProgress while attempts remain — a retry is a worker behind it,
+    * and Paused would tell the caller to resume something already queued. The cap
+    * catches downloads failing for their own reasons, not just the network-policy stall
+    * it was written for. It counts runs, not errors: waiting on a constraint is free,
+    * but every start costs an attempt.
     */
    private fun handleTransientError(manager: DownloadManager, store: DownloadStore, path: String, message: String): Result {
-      Log.w(TAG, "Download failed (transient) for $path: $message")
+      if (isOutOfAttempts(runAttemptCount)) {
+         Log.w(TAG, "Download failed (transient, out of attempts) for $path: $message")
+         revertInProgressRecord(manager, store, path)
+         dismissNotification()
 
-      revertInProgressRecord(manager, store, path)
+         return Result.failure()
+      }
 
+      Log.w(TAG, "Download stalled (transient) for $path: $message")
       dismissNotification()
-      return Result.failure()
+
+      return Result.retry()
    }
 
    private fun notificationID(): Int = id.hashCode()
@@ -392,6 +403,12 @@ internal class DownloadWorker(
       internal const val DOWNLOAD_SUFFIX = ".download"
       private const val BUFFER_SIZE = 64 * 1024
       private const val MAX_RETRIES = 3
+
+      /**
+       * Five retries on WorkManager's default 30-second exponential backoff — relied
+       * on here rather than set — is roughly a quarter hour.
+       */
+      private const val MAX_WORK_ATTEMPTS = 5
       private const val NOTIFICATION_CHANNEL_ID = "download_manager_channel"
 
       /**
@@ -404,6 +421,15 @@ internal class DownloadWorker(
          val tempFile = File("$path$DOWNLOAD_SUFFIX")
          return if (tempFile.exists()) tempFile.length() else null
       }
+
+      /**
+       * Whether a transient failure has run out of retries and should give up.
+       *
+       * WorkManager counts the runs before this one, so the first sees 0 and the
+       * download gives up on the run that sees [MAX_WORK_ATTEMPTS].
+       */
+      internal fun isOutOfAttempts(runAttemptCount: Int): Boolean =
+         runAttemptCount >= MAX_WORK_ATTEMPTS
 
       private fun isTransient(e: IOException): Boolean = when (e) {
          is UnknownHostException -> false  // DNS resolution failed

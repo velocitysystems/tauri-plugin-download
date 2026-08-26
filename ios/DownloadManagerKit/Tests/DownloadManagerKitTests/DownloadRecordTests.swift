@@ -150,7 +150,7 @@ final class DownloadRecordTests: XCTestCase {
 
       XCTAssertEqual(
          Set(json.keys),
-         ["url", "path", "receivedBytes", "totalBytes", "progress", "status"]
+         ["url", "path", "options", "receivedBytes", "totalBytes", "progress", "status"]
       )
    }
 
@@ -173,6 +173,7 @@ final class DownloadRecordTests: XCTestCase {
       // field names drifted on both sides together.
       let json = """
       {"url":"http://example.com/f.mp4","path":"file:///tmp/f.mp4",\
+      "options":{"allowMetered":true},\
       "receivedBytes":500,"totalBytes":1000,"status":"paused"}
       """
 
@@ -201,6 +202,85 @@ final class DownloadRecordTests: XCTestCase {
       XCTAssertEqual(decoded.status, .paused)
       // progress is derived via toItem(), not stored.
       XCTAssertEqual(decoded.toItem().progress, 50.0)
+   }
+
+
+   // MARK: - Network policy
+
+   func testUnstatedPolicyAllowsMeteredConnections() {
+      // The API default, applied when a caller states no policy. It is not a
+      // decoding fallback — a persisted record must spell the value out.
+      XCTAssertTrue(sampleRecord().options.allowMetered)
+      XCTAssertTrue(CreateOptions().allowMetered)
+   }
+
+   func testRecordWithoutOptionsFailsToDecode() {
+      // The policy is decided once, at creation. A record that has lost it cannot
+      // be read back as anything trustworthy, so decoding refuses rather than
+      // assuming the permissive default.
+      let json = """
+      {"url":"http://example.com/f.mp4","path":"file:///tmp/f.mp4",\
+      "receivedBytes":0,"totalBytes":null,"status":"idle"}
+      """
+
+      XCTAssertThrowsError(
+         try JSONDecoder().decode(DownloadRecord.self, from: Data(json.utf8))
+      )
+   }
+
+   func testRecordWithEmptyOptionsFailsToDecode() {
+      let json = """
+      {"url":"http://example.com/f.mp4","path":"file:///tmp/f.mp4","options":{},\
+      "receivedBytes":0,"totalBytes":null,"status":"idle"}
+      """
+
+      XCTAssertThrowsError(
+         try JSONDecoder().decode(DownloadRecord.self, from: Data(json.utf8))
+      )
+   }
+
+   func testRecordDecodesARestrictedPolicy() throws {
+      let json = """
+      {"url":"http://example.com/f.mp4","path":"file:///tmp/f.mp4",\
+      "options":{"allowMetered":false},\
+      "receivedBytes":0,"totalBytes":null,"status":"idle"}
+      """
+
+      let record = try JSONDecoder().decode(DownloadRecord.self, from: Data(json.utf8))
+
+      XCTAssertFalse(record.options.allowMetered)
+   }
+
+   func testRecordRoundTripsARestrictedPolicy() throws {
+      let record = DownloadRecord(
+         url: URL(string: "http://example.com/file.mp4")!,
+         path: URL(fileURLWithPath: "/tmp/file.mp4"),
+         options: CreateOptions(allowMetered: false)
+      )
+
+      let decoded = try JSONDecoder().decode(
+         DownloadRecord.self,
+         from: try JSONEncoder().encode(record)
+      )
+
+      XCTAssertFalse(decoded.options.allowMetered)
+   }
+
+   func testItemEncodesTheResolvedPolicy() throws {
+      let record = DownloadRecord(
+         url: URL(string: "http://example.com/file.mp4")!,
+         path: URL(fileURLWithPath: "/tmp/file.mp4"),
+         options: CreateOptions(allowMetered: false)
+      )
+
+      let json = try XCTUnwrap(
+         try JSONSerialization.jsonObject(
+            with: try JSONEncoder().encode(record.toItem())
+         ) as? [String: Any]
+      )
+      let options = try XCTUnwrap(json["options"] as? [String: Any])
+
+      XCTAssertEqual(options["allowMetered"] as? Bool, false)
    }
 
    // MARK: - Action response
