@@ -60,13 +60,11 @@ internal class DownloadWorker(
          // Check the size of the already downloaded part, if any.
          var downloadedSize = if (tempFile.exists()) tempFile.length() else 0L
 
-         // Build request with Range header for resuming.
-         val requestBuilder = Request.Builder().url(url)
-         if (downloadedSize > 0) {
-            requestBuilder.header("Range", "bytes=$downloadedSize-")
-         }
-
-         val response = executeWithRetry(requestBuilder.build())
+         // The user agent comes from the input data rather than the manager: a worker
+         // re-run after process death has no loaded plugin to have set it.
+         val response = executeWithRetry(
+            requestFor(url, inputData.getString(KEY_USER_AGENT), downloadedSize)
+         )
 
          response.use {
             // If we requested a Range but the server doesn't support partial downloads,
@@ -398,6 +396,28 @@ internal class DownloadWorker(
    companion object {
       const val KEY_URL = "download_url"
       const val KEY_PATH = "download_path"
+      const val KEY_USER_AGENT = "download_user_agent"
+
+      /**
+       * Builds the download request.
+       *
+       * A null [userAgent] leaves OkHttp's own default in place; a [downloadedSize]
+       * above zero asks the server to resume from there. Both headers are set here, so
+       * neither can displace the other.
+       *
+       * Built here rather than inline in [doWork], which needs [WorkerParameters] and
+       * so cannot be reached without WorkManager's test artifact.
+       */
+      internal fun requestFor(url: String, userAgent: String?, downloadedSize: Long): Request {
+         val builder = Request.Builder().url(url)
+
+         userAgent?.let { builder.header("User-Agent", it) }
+         if (downloadedSize > 0) {
+            builder.header("Range", "bytes=$downloadedSize-")
+         }
+
+         return builder.build()
+      }
 
       internal const val TAG = "DownloadWorker"
       internal const val DOWNLOAD_SUFFIX = ".download"

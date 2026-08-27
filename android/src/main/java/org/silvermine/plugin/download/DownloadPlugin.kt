@@ -41,6 +41,17 @@ class CreateOptionsArgs {
    var allowMetered: Boolean? = null
 }
 
+/**
+ * Settings pushed by the Rust plugin at startup.
+ *
+ * Named for the payload rather than the setting so a second builder option is a new
+ * field here, not a second command.
+ */
+@InvokeArg
+class ConfigArgs {
+   var userAgent: String? = null
+}
+
 @InvokeArg
 class CreateArgs {
    var path: String? = null
@@ -74,6 +85,23 @@ class DownloadPlugin(activity: Activity) : Plugin(activity) {
    override fun onDestroy() {
       super.onDestroy()
       scope.cancel()
+   }
+
+   /**
+    * Applies the settings from the Rust plugin's builder.
+    *
+    * Invoked by the Rust plugin during setup rather than from the webview: Tauri
+    * fills the config it hands to [load] from `tauri.conf.json`, so a value set on
+    * the Rust builder can only arrive as a command.
+    */
+   @Command
+   fun configure(invoke: Invoke) {
+      val args = invoke.parseArgs(ConfigArgs::class.java)
+      val userAgent = args.userAgent
+         ?: return invoke.reject("Missing required argument: userAgent")
+
+      downloadManager.userAgent = userAgent
+      invoke.resolve()
    }
 
    @Command

@@ -3,6 +3,7 @@ package org.silvermine.downloadmanager
 import android.content.Context
 import android.util.Log
 import androidx.work.Constraints
+import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
@@ -23,6 +24,16 @@ import java.io.File
 class DownloadManager private constructor(context: Context) {
    internal val store = DownloadStore(context)
    private val workManager = WorkManager.getInstance(context)
+
+   /**
+    * The user agent sent with every download request, or `null` to leave OkHttp's
+    * own default in place.
+    *
+    * Set by the Tauri plugin during setup. Volatile because it is written on the
+    * main thread and read when a download is enqueued.
+    */
+   @Volatile
+   var userAgent: String? = null
 
    private val _changed = MutableSharedFlow<DownloadItem>(
       extraBufferCapacity = 64,
@@ -243,12 +254,7 @@ class DownloadManager private constructor(context: Context) {
    private fun enqueueDownload(record: DownloadRecord) {
       val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
          .setConstraints(constraintsFor(record.options))
-         .setInputData(
-            workDataOf(
-               DownloadWorker.KEY_URL to record.url,
-               DownloadWorker.KEY_PATH to record.path,
-            )
-         )
+         .setInputData(inputDataFor(record, userAgent))
          .addTag(WORK_TAG)
          .build()
 
@@ -262,6 +268,22 @@ class DownloadManager private constructor(context: Context) {
    private fun workName(path: String): String = "$WORK_TAG:$path"
 
    companion object {
+      /**
+       * Builds the work request's input data.
+       *
+       * The user agent is captured here rather than read by the worker: WorkManager
+       * can re-run a stranded worker in a fresh process with no Tauri activity, where
+       * the plugin never loads and [userAgent] is null. Only input data survives.
+       *
+       * Built here for the same reason as [constraintsFor].
+       */
+      internal fun inputDataFor(record: DownloadRecord, userAgent: String?): Data =
+         workDataOf(
+            DownloadWorker.KEY_URL to record.url,
+            DownloadWorker.KEY_PATH to record.path,
+            DownloadWorker.KEY_USER_AGENT to userAgent,
+         )
+
       /**
        * Builds the work request's constraints from a download's network policy.
        *

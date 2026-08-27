@@ -82,4 +82,26 @@ class DownloadManagerTest {
          DownloadManager.constraintsFor(CreateOptions(allowMetered = false)).requiredNetworkType,
       )
    }
+
+   // -- Work request input data --
+
+   @Test
+   fun `a configured user agent is captured in the work request`() {
+      val data = DownloadManager.inputDataFor(inProgressRecord(), userAgent = "my-app/1.0")
+
+      assertEquals("my-app/1.0", data.getString(DownloadWorker.KEY_USER_AGENT))
+      assertEquals("http://example.com/file.mp4", data.getString(DownloadWorker.KEY_URL))
+      assertEquals("/tmp/file.mp4", data.getString(DownloadWorker.KEY_PATH))
+   }
+
+   @Test
+   fun `no user agent stores a null value`() {
+      // The key is present with a null value, not absent: measured on work-runtime
+      // 2.9.1, `workDataOf(k to null)` gives size()==3 and containsKey()==true. Either
+      // way `getString` returns null, which the worker treats as "send no User-Agent",
+      // leaving OkHttp's default.
+      val data = DownloadManager.inputDataFor(inProgressRecord(), userAgent = null)
+
+      assertNull(data.getString(DownloadWorker.KEY_USER_AGENT))
+   }
 }
