@@ -115,6 +115,58 @@ fn main() {
 }
 ```
 
+### Configuration
+
+Use `Builder` instead of `init()` to configure the plugin. `init()` is shorthand for
+`Builder::new().build()`.
+
+```rust
+fn main() {
+   tauri::Builder::default()
+      .plugin(
+         tauri_plugin_download::Builder::new()
+            .user_agent("my-app/1.0")
+            .build(),
+      )
+      .run(tauri::generate_context!())
+      .expect("error while running tauri application");
+}
+```
+
+| Method | Type | Default | Description |
+| --- | --- | --- | --- |
+| `user_agent` | `impl Into<String>` | None | `User-Agent` sent with every download request |
+
+#### User agent
+
+The setting is opt-in. Leaving it unset keeps whatever each platform's own HTTP stack
+sends, which is not the same on all three:
+
+| Platform | Transport | User agent when unset |
+| --- | --- | --- |
+| Desktop | `reqwest` | none |
+| Android | OkHttp | `okhttp/<version>` |
+| iOS | `URLSession` | `<app>/<version> CFNetwork/… Darwin/…` |
+
+Setting it makes all three send the same value. It must be printable ASCII or a
+horizontal tab — Android's HTTP client rejects anything above `~`, so that is the rule
+all three share. An invalid value fails plugin initialization rather than surfacing
+later as a failed download on one platform. An empty value is accepted — it is legal
+HTTP, and sends an empty header rather than none.
+
+A download that outlives the process picks up a changed user agent differently on each
+platform:
+
+   * **Desktop** builds one HTTP client per process, so a download resumed after a
+     relaunch uses the new run's value.
+   * **Android** reads the current value whenever a download is enqueued, an explicit
+     `resume` included, so it behaves like desktop. Only when WorkManager re-runs a
+     stranded worker itself — in a process where the plugin never loaded — does it fall
+     back to the value captured in the work request.
+   * **iOS** keeps the value a download started with when it resumes from resume data,
+     which carries the original request. Without resume data — from a server with no
+     byte-range support, say — it restarts from zero and picks up the current value.
+
 ### API
 
 #### List downloads

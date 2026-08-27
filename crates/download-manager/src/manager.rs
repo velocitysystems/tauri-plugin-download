@@ -20,6 +20,14 @@ pub(crate) static DOWNLOAD_SUFFIX: &str = ".download";
 /// Callback invoked whenever a download item changes state.
 pub type OnChanged = Arc<dyn Fn(DownloadItem) + Send + Sync + 'static>;
 
+/// Manager-wide settings, fixed when the manager is constructed.
+#[derive(Debug, Clone, Default)]
+pub struct DownloadManagerConfig {
+   /// User agent sent with every download request. `None` leaves the transport's
+   /// own default in place.
+   pub user_agent: Option<String>,
+}
+
 /// Tauri-agnostic download manager, mirroring the iOS/Android `DownloadManager`.
 #[derive(Clone)]
 pub struct DownloadManager {
@@ -35,7 +43,8 @@ impl DownloadManager {
    /// # Arguments
    /// - `data_dir` - Directory where `downloads.json` will be stored.
    /// - `on_changed` - Callback invoked on every state/progress change.
-   pub fn new(data_dir: PathBuf, on_changed: OnChanged) -> Self {
+   /// - `config` - Manager-wide settings.
+   pub fn new(data_dir: PathBuf, on_changed: OnChanged, config: DownloadManagerConfig) -> Self {
       #[cfg(target_os = "macos")]
       {
          // Start the path monitor early so its initial asynchronous update has
@@ -46,6 +55,7 @@ impl DownloadManager {
       Self::with_connection_status_provider(
          data_dir,
          on_changed,
+         config,
          Arc::new(connectivity::connection_status),
       )
    }
@@ -53,6 +63,7 @@ impl DownloadManager {
    fn with_connection_status_provider(
       data_dir: PathBuf,
       on_changed: OnChanged,
+      config: DownloadManagerConfig,
       connection_status: ConnectionStatusProvider,
    ) -> Self {
       let store = DownloadStore::new(data_dir.join("downloads.json"));
@@ -61,7 +72,25 @@ impl DownloadManager {
       }
       // Build client with retry middleware for transient failures.
       let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-      let http_client = ClientBuilder::new(reqwest::Client::new())
+
+      let mut client_builder = reqwest::Client::builder();
+      if let Some(ref user_agent) = config.user_agent {
+         // Checked rather than trusted: a public constructor cannot assume its caller
+         // validated, and an unusable value would panic the build below. A direct
+         // consumer gets no user agent and no warning — `release_max_level_off` elides it.
+         match validate::user_agent(user_agent) {
+            Ok(()) => client_builder = client_builder.user_agent(user_agent.clone()),
+            Err(e) => warn!("Ignoring invalid user agent: {}", e),
+         }
+      }
+
+      // Mirrors `reqwest::Client::new()`, which expects on the same builder. With the
+      // user agent checked above, only a TLS or resolver failure can reach this.
+      let client = client_builder
+         .build()
+         .expect("Failed to build the download HTTP client");
+
+      let http_client = ClientBuilder::new(client)
          .with(RetryTransientMiddleware::new_with_policy(retry_policy))
          .build();
       Self {
@@ -453,6 +482,13 @@ mod tests {
    fn make_manager_with_provider(
       connection_status: impl Fn() -> connectivity::Result<ConnectionStatus> + Send + Sync + 'static,
    ) -> (DownloadManager, TempDir, EventLog) {
+      make_manager_with_config(DownloadManagerConfig::default(), connection_status)
+   }
+
+   fn make_manager_with_config(
+      config: DownloadManagerConfig,
+      connection_status: impl Fn() -> connectivity::Result<ConnectionStatus> + Send + Sync + 'static,
+   ) -> (DownloadManager, TempDir, EventLog) {
       let dir = TempDir::new().unwrap();
       let events: EventLog = Arc::new(Mutex::new(Vec::new()));
       let captured = events.clone();
@@ -462,6 +498,7 @@ mod tests {
       let manager = DownloadManager::with_connection_status_provider(
          dir.path().to_path_buf(),
          on_changed,
+         config,
          Arc::new(connection_status),
       );
       (manager, dir, events)

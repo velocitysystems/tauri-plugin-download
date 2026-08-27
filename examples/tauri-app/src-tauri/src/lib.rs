@@ -3,7 +3,11 @@
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
-        .plugin(tauri_plugin_download::init())
+        .plugin(
+            tauri_plugin_download::Builder::new()
+                .user_agent("tauri-app/0.1.0")
+                .build(),
+        )
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
