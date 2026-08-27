@@ -142,7 +142,7 @@ final class DownloadManagerTests: XCTestCase {
    }
 
    func testUnrestrictedRequestLeavesEveryPathAllowed() {
-      let request = DownloadManager.request(for: idleRecord(allowMetered: true))
+      let request = DownloadManager.request(for: idleRecord(allowMetered: true), userAgent: nil)
 
       XCTAssertEqual(request.url, URL(string: "http://example.com/file.mp4"))
       XCTAssertTrue(request.allowsCellularAccess)
@@ -154,11 +154,54 @@ final class DownloadManagerTests: XCTestCase {
       // All three, not just allowsCellularAccess: expensive covers personal
       // hotspots and constrained covers Low Data Mode, which together match the
       // desktop check that rejects a metered *or* constrained connection.
-      let request = DownloadManager.request(for: idleRecord(allowMetered: false))
+      let request = DownloadManager.request(for: idleRecord(allowMetered: false), userAgent: nil)
 
       XCTAssertEqual(request.url, URL(string: "http://example.com/file.mp4"))
       XCTAssertFalse(request.allowsCellularAccess)
       XCTAssertFalse(request.allowsExpensiveNetworkAccess)
       XCTAssertFalse(request.allowsConstrainedNetworkAccess)
+   }
+
+   func testConfiguredUserAgentIsSetOnTheRequest() {
+      let request = DownloadManager.request(
+         for: idleRecord(allowMetered: true),
+         userAgent: "my-app/1.0"
+      )
+
+      XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "my-app/1.0")
+   }
+
+   func testNoUserAgentLeavesTheHeaderUnset() {
+      // The setting is opt-in: unset must leave URLSession's own default in place
+      // rather than start sending a header the app did not ask for.
+      let request = DownloadManager.request(
+         for: idleRecord(allowMetered: true),
+         userAgent: nil
+      )
+
+      XCTAssertNil(request.value(forHTTPHeaderField: "User-Agent"))
+   }
+
+   // -- User agent holder --
+
+   func testUserAgentHolderStoresTheValue() async {
+      let holder = UserAgentHolder()
+
+      await holder.set("my-app/1.0")
+
+      let value = await holder.value
+      XCTAssertEqual(value, "my-app/1.0")
+   }
+
+   func testUserAgentHolderOverwritesAnEarlierValue() async {
+      // A holder that latched its first value would pass the test above and still
+      // send a stale user agent for the rest of the process.
+      let holder = UserAgentHolder()
+
+      await holder.set("my-app/1.0")
+      await holder.set(nil)
+
+      let value = await holder.value
+      XCTAssertNil(value)
    }
 }

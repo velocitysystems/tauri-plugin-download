@@ -25,6 +25,8 @@ public final class DownloadManager: NSObject {
    }
    
    let downloadContinuation = DownloadContinuation()
+
+   private let userAgentHolder = UserAgentHolder()
    
    private var sessionDelegate: DownloadSessionDelegate!
    private var session: URLSession!
@@ -128,6 +130,22 @@ public final class DownloadManager: NSObject {
    }
    
    /**
+    Sets the user agent sent with every download request.
+
+    Applied per request, not on the session configuration: the background session is
+    built in `init()` before any value can arrive, and is not one to recreate at
+    runtime. Same reason the network policy is per request.
+
+    The holder is tested; that `start(path:)` and `resume(path:)` read it is not, and
+    cannot be until this package can intercept the session's requests.
+
+    - Parameter userAgent: The user agent, or `nil` to leave URLSession's default.
+    */
+   public func setUserAgent(_ userAgent: String?) async {
+      await userAgentHolder.set(userAgent)
+   }
+
+   /**
     Starts a download operation.
 
     - Parameter path: The download path.
@@ -150,7 +168,8 @@ public final class DownloadManager: NSObject {
       record.setStatus(.inProgress)
       await store.update(record)
 
-      let task = session.downloadTask(with: Self.request(for: record))
+      let request = Self.request(for: record, userAgent: await userAgentHolder.value)
+      let task = session.downloadTask(with: request)
       task.taskDescription = path.path
       task.resume()
       
@@ -189,9 +208,10 @@ public final class DownloadManager: NSObject {
 
       if let resumeData, !resumeData.isEmpty {
          // The one task this manager creates without building the request: resume
-         // data carries the original NSURLRequest, so the policy set by request(for:)
-         // at start() survives. Confirmed on device, but Apple does not document
-         // resume data as preserving request properties — re-check on new iOS majors.
+         // data carries the original NSURLRequest, so the policy and user agent set
+         // by request(for:) at start() survive. Confirmed on device, but Apple does
+         // not document resume data as preserving request properties — re-check on
+         // new iOS majors.
          task = session.downloadTask(withResumeData: resumeData)
       } else {
          os_log(.info, log: Log.downloadManager,
@@ -204,7 +224,8 @@ public final class DownloadManager: NSObject {
          record.setBytes(received: 0, total: record.totalBytes)
          await store.update(record)
 
-         task = session.downloadTask(with: Self.request(for: record))
+         let request = Self.request(for: record, userAgent: await userAgentHolder.value)
+         task = session.downloadTask(with: request)
       }
 
       task.taskDescription = path.path
@@ -483,7 +504,7 @@ public final class DownloadManager: NSObject {
    /// A restricted task is not rejected: a background session waits for a path
    /// that satisfies the request and starts transferring once one appears.
    /// Desktop, having no such scheduler, rejects `start()`/`resume()` instead.
-   static func request(for record: DownloadRecord) -> URLRequest {
+   static func request(for record: DownloadRecord, userAgent: String?) -> URLRequest {
       var request = URLRequest(url: record.url)
       let allowMetered = record.options.allowMetered
 
@@ -494,6 +515,10 @@ public final class DownloadManager: NSObject {
       request.allowsCellularAccess = allowMetered
       request.allowsExpensiveNetworkAccess = allowMetered
       request.allowsConstrainedNetworkAccess = allowMetered
+
+      if let userAgent {
+         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+      }
 
       return request
    }
