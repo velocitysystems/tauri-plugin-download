@@ -7,6 +7,14 @@ class PathArgs: Decodable {
    let path: String
 }
 
+/// Settings pushed by the Rust plugin at startup.
+///
+/// Named for the payload rather than the setting so a second builder option is a new
+/// field here, not a second command.
+class ConfigArgs: Decodable {
+   let userAgent: String
+}
+
 class CreateArgs: Decodable {
    let path: String
    let url: String
@@ -26,6 +34,22 @@ class DownloadPlugin: Plugin {
              Logger.debug("[\(download.path.lastPathComponent)] \(download.status) - \(String(format: "%.0f", download.progress))% (\(download.receivedBytes)/\(download.totalBytes.map { String($0) } ?? "unknown") bytes)")
 #endif
           }
+      }
+   }
+
+   /// Applies the settings from the Rust plugin's builder.
+   ///
+   /// Invoked by the Rust plugin during setup rather than from the webview: Tauri
+   /// fills the config it hands to `load(webview:)` from `tauri.conf.json`, so a
+   /// value set on the Rust builder can only arrive as a command.
+   @objc public func configure(_ invoke: Invoke) throws {
+      let args = try invoke.parseArgs(ConfigArgs.self)
+      Task {
+         await self.downloadManager.setUserAgent(args.userAgent)
+         // No response payload anchors this call inside the Task the way every other
+         // handler's does, so hoisting it out would still compile — and would let
+         // Rust's blocking `run_mobile_plugin` return before the actor write lands.
+         invoke.resolve()
       }
    }
 

@@ -25,6 +25,9 @@ pub enum Error {
    #[error("Path Error: {0}")]
    Path(String),
 
+   #[error("User Agent Error: {0}")]
+   UserAgent(String),
+
    #[error("Network unavailable: no active connection")]
    NetworkUnavailable,
 

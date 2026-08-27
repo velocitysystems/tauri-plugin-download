@@ -36,6 +36,16 @@ mod mobile_types {
       pub path: String,
    }
 
+   /// Settings pushed to the native plugin once at startup.
+   ///
+   /// Named for the payload rather than the setting so a second builder option is a
+   /// new field here, not a second command mirrored across Kotlin and Swift.
+   #[derive(Serialize)]
+   #[serde(rename_all = "camelCase")]
+   pub struct ConfigArgs {
+      pub user_agent: String,
+   }
+
    #[derive(Serialize)]
    #[serde(rename_all = "camelCase")]
    pub struct CreateArgs {
@@ -99,7 +109,9 @@ mod mobile_types {
 }
 
 #[cfg(mobile)]
-pub use mobile_types::{CreateArgs, CreateOptions, DownloadActionResponse, DownloadItem, PathArgs};
+pub use mobile_types::{
+   ConfigArgs, CreateArgs, CreateOptions, DownloadActionResponse, DownloadItem, PathArgs,
+};
 
 #[cfg(test)]
 mod tests {

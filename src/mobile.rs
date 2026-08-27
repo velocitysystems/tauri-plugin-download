@@ -13,18 +13,60 @@ tauri::ios_plugin_binding!(init_plugin_download);
 pub fn init<R: Runtime, C: DeserializeOwned>(
    _app: &AppHandle<R>,
    _api: PluginApi<R, C>,
+   user_agent: Option<String>,
 ) -> crate::Result<Download<R>> {
    #[cfg(target_os = "android")]
    let handle = _api.register_android_plugin(PLUGIN_IDENTIFIER, "DownloadPlugin")?;
    #[cfg(target_os = "ios")]
    let handle = _api.register_ios_plugin(init_plugin_download)?;
-   Ok(Download(handle))
+
+   let download = Download(handle);
+
+   // Pushed because the plugin config Tauri forwards to `load()` comes from
+   // `tauri.conf.json`, so a builder value cannot ride it. Registration blocks and
+   // runs inside `Builder::build`, before `App::run` creates any webview.
+   //
+   // What keeps `configure` unreachable from JS is the ACL, not its absence from
+   // `generate_handler!` — absence is what routes to native, as `registerListener`
+   // does. The invariant is that `configure` never enters COMMANDS.
+   //
+   // A transport failure aborts launch, deliberately: with `release_max_level_off`,
+   // "log and continue" would ship the wrong agent silently.
+   if let Some(user_agent) = user_agent {
+      download.configure(&user_agent)?;
+   }
+
+   Ok(download)
 }
 
 /// Access to the download APIs.
 pub struct Download<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> Download<R> {
+   ///
+   /// Pushes the builder's settings to the native plugin.
+   ///
+   /// Deliberately not public: it is only correct to call once, before any download
+   /// exists. A later change would reach Android only for work enqueued after it and
+   /// iOS only for newly created tasks, which is not a contract worth offering.
+   ///
+   /// # Arguments
+   /// - `user_agent` - The user agent sent with every download request.
+   ///
+   fn configure(&self, user_agent: &str) -> crate::Result<()> {
+      // A bare `invoke.resolve()` sends the literal `null` on both platforms, which
+      // is what `()` decodes from. Anything else here would fail to deserialize.
+      self
+         .0
+         .run_mobile_plugin(
+            "configure",
+            ConfigArgs {
+               user_agent: user_agent.to_string(),
+            },
+         )
+         .map_err(Into::into)
+   }
+
    ///
    /// Initializes the API.
    /// Updates the state of any download operations which are still marked as "In Progress". This can occur if the

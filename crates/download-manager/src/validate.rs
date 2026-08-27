@@ -59,6 +59,29 @@ pub fn url(url: &str) -> crate::Result<()> {
    Ok(())
 }
 
+/// Validates an HTTP user agent.
+///
+/// Accepts printable ASCII and horizontal tab — what all three transports accept, and
+/// narrower than reqwest's own `HeaderValue` rule, which admits the UTF-8 bytes of a
+/// non-ASCII character only for OkHttp to reject them on every Android download.
+///
+/// No emptiness check, unlike [`path`] and [`url`]: an empty user agent is legal HTTP,
+/// and refusing it would be this crate's policy, not the specification's.
+pub fn user_agent(user_agent: &str) -> crate::Result<()> {
+   let invalid = user_agent
+      .chars()
+      .find(|&c| c != '\t' && c != ' ' && !c.is_ascii_graphic());
+
+   if let Some(c) = invalid {
+      return Err(Error::UserAgent(format!(
+         "Invalid user agent: {:?} is not printable ASCII",
+         c
+      )));
+   }
+
+   Ok(())
+}
+
 #[cfg(test)]
 mod tests {
    use super::*;
@@ -123,5 +146,50 @@ mod tests {
       assert!(url("not a valid url").is_err());
       // Protocol-relative URL with no scheme.
       assert!(url("//example.com/file.mp4").is_err());
+   }
+
+   #[test]
+   fn test_valid_user_agents() {
+      assert!(user_agent("my-app/1.0").is_ok());
+      assert!(user_agent("MyApp/2.1 (Linux; x86_64) build/1234").is_ok());
+      // A single token with no version is unusual but legal.
+      assert!(user_agent("curl").is_ok());
+   }
+
+   #[test]
+   fn test_user_agent_with_an_internal_tab_is_accepted() {
+      // Tab is the one non-graphic character OkHttp's `checkValue` admits, so the
+      // accepted set matches it exactly. Without this case, dropping the tab arm of
+      // the filter changes no test outcome.
+      assert!(user_agent("my-app/1.0 (build\t1)").is_ok());
+   }
+
+   #[test]
+   fn test_empty_user_agent_is_accepted() {
+      // Characterisation test, not a design goal: an empty header value is legal
+      // HTTP, so the rule delegated to `HeaderValue` admits it. Rejecting it would
+      // be a policy this crate invented.
+      assert!(user_agent("").is_ok());
+   }
+
+   #[test]
+   fn test_user_agent_with_non_ascii_characters() {
+      // Accepted by `HeaderValue`, rejected by OkHttp: without this rule the value
+      // passes plugin init and then fails every Android download.
+      assert!(user_agent("Caf\u{e9}/1.0").is_err());
+      assert!(user_agent("\u{fc}ber/2.0").is_err());
+      assert!(user_agent("app/1.0 \u{2122}").is_err());
+
+      let result = user_agent("Caf\u{e9}/1.0");
+      assert!(result.unwrap_err().to_string().contains("printable ASCII"));
+   }
+
+   #[test]
+   fn test_user_agent_with_control_characters() {
+      // A newline would let a caller inject a second header, so the header value
+      // rule rejects it before the client is ever built.
+      assert!(user_agent("bad\nvalue").is_err());
+      assert!(user_agent("bad\rvalue").is_err());
+      assert!(user_agent("bad\0value").is_err());
    }
 }

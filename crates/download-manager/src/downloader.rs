@@ -251,7 +251,7 @@ impl ProgressTracker {
 #[cfg(test)]
 mod tests {
    use super::*;
-   use crate::manager::{DownloadManager, OnChanged};
+   use crate::manager::{DownloadManager, DownloadManagerConfig, OnChanged};
    use crate::store::DownloadStore;
    use std::sync::{Arc, Mutex};
    use tempfile::TempDir;
@@ -267,13 +267,17 @@ mod tests {
    }
 
    fn make_fixture() -> TestFixture {
+      make_fixture_with_config(DownloadManagerConfig::default())
+   }
+
+   fn make_fixture_with_config(config: DownloadManagerConfig) -> TestFixture {
       let dir = TempDir::new().unwrap();
       let events: EventLog = Arc::new(Mutex::new(Vec::new()));
       let captured = events.clone();
       let on_changed: OnChanged = Arc::new(move |event| {
          captured.lock().unwrap().push(event);
       });
-      let manager = DownloadManager::new(dir.path().to_path_buf(), on_changed);
+      let manager = DownloadManager::new(dir.path().to_path_buf(), on_changed, config);
       TestFixture {
          manager,
          events,
@@ -608,7 +612,11 @@ mod tests {
          }
       });
 
-      let manager = DownloadManager::new(dir.path().to_path_buf(), on_changed);
+      let manager = DownloadManager::new(
+         dir.path().to_path_buf(),
+         on_changed,
+         DownloadManagerConfig::default(),
+      );
       *store_cell.lock().unwrap() = Some(manager.store.clone());
 
       let server = MockServer::start().await;
@@ -700,5 +708,119 @@ mod tests {
          events_with_status(&fixture.events, DownloadStatus::Completed),
          0
       );
+   }
+
+   /// Returns the `User-Agent` the mock server actually received, if any.
+   ///
+   /// Asserted on the request the server saw rather than on the client, because the
+   /// point of the setting is what reaches the far end of the wire.
+   async fn received_user_agent(server: &MockServer) -> Option<String> {
+      let requests = server.received_requests().await.unwrap();
+      assert_eq!(requests.len(), 1);
+      requests[0]
+         .headers
+         .get("user-agent")
+         .map(|value| value.to_str().unwrap().to_string())
+   }
+
+   #[tokio::test]
+   async fn test_configured_user_agent_is_sent_with_the_request() {
+      let fixture = make_fixture_with_config(DownloadManagerConfig {
+         user_agent: Some("my-app/1.0".to_string()),
+      });
+      let server = MockServer::start().await;
+
+      Mock::given(method("GET"))
+         .and(wm_path("/file"))
+         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"body".to_vec()))
+         .mount(&server)
+         .await;
+
+      let dest = dest_path(&fixture, "file.bin");
+      let url = format!("{}/file", server.uri());
+      let item = seed_in_progress(&fixture.manager, &dest, &url);
+
+      download(&fixture.manager, item).await.unwrap();
+
+      assert_eq!(
+         received_user_agent(&server).await,
+         Some("my-app/1.0".to_string())
+      );
+   }
+
+   #[tokio::test]
+   async fn test_no_user_agent_is_sent_when_none_is_configured() {
+      // The setting is opt-in: leaving it unset must not start sending a header
+      // that consumers were not sending before.
+      let fixture = make_fixture();
+      let server = MockServer::start().await;
+
+      Mock::given(method("GET"))
+         .and(wm_path("/file"))
+         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"body".to_vec()))
+         .mount(&server)
+         .await;
+
+      let dest = dest_path(&fixture, "file.bin");
+      let url = format!("{}/file", server.uri());
+      let item = seed_in_progress(&fixture.manager, &dest, &url);
+
+      download(&fixture.manager, item).await.unwrap();
+
+      assert_eq!(received_user_agent(&server).await, None);
+   }
+
+   #[tokio::test]
+   async fn test_an_unusable_user_agent_is_dropped_rather_than_panicking() {
+      // `DownloadManager::new` is public on a Tauri-agnostic crate, so it cannot
+      // assume the caller validated first the way the Tauri plugin does. An unusable
+      // value is dropped with a warning instead of panicking the constructor.
+      let fixture = make_fixture_with_config(DownloadManagerConfig {
+         user_agent: Some("bad\nvalue".to_string()),
+      });
+      let server = MockServer::start().await;
+
+      Mock::given(method("GET"))
+         .and(wm_path("/file"))
+         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"body".to_vec()))
+         .mount(&server)
+         .await;
+
+      let dest = dest_path(&fixture, "file.bin");
+      let url = format!("{}/file", server.uri());
+      let item = seed_in_progress(&fixture.manager, &dest, &url);
+
+      download(&fixture.manager, item).await.unwrap();
+
+      assert_eq!(received_user_agent(&server).await, None);
+   }
+
+   /// A configured user agent must not displace the `Range` header the resume path
+   /// sets: `.headers(...)` replaces the per-request map, not the client default.
+   #[tokio::test]
+   async fn test_user_agent_and_range_header_are_both_sent_on_resume() {
+      let fixture = make_fixture_with_config(DownloadManagerConfig {
+         user_agent: Some("my-app/1.0".to_string()),
+      });
+      let server = MockServer::start().await;
+
+      Mock::given(method("GET"))
+         .and(wm_path("/file"))
+         .and(header("Range", "bytes=4-"))
+         .and(header("user-agent", "my-app/1.0"))
+         .respond_with(ResponseTemplate::new(206).set_body_bytes(b"rest".to_vec()))
+         .expect(1)
+         .mount(&server)
+         .await;
+
+      let dest = dest_path(&fixture, "file.bin");
+      fs::write(format!("{}{}", dest, DOWNLOAD_SUFFIX), b"part").unwrap();
+
+      let url = format!("{}/file", server.uri());
+      let item = seed_in_progress(&fixture.manager, &dest, &url);
+
+      download(&fixture.manager, item).await.unwrap();
+
+      server.verify().await;
    }
 }
