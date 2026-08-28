@@ -14,6 +14,7 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
    _app: &AppHandle<R>,
    _api: PluginApi<R, C>,
    user_agent: Option<String>,
+   store_dir: Option<String>,
 ) -> crate::Result<Download<R>> {
    #[cfg(target_os = "android")]
    let handle = _api.register_android_plugin(PLUGIN_IDENTIFIER, "DownloadPlugin")?;
@@ -22,19 +23,20 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 
    let download = Download(handle);
 
-   // Pushed because the plugin config Tauri forwards to `load()` comes from
-   // `tauri.conf.json`, so a builder value cannot ride it. Registration blocks and
-   // runs inside `Builder::build`, before `App::run` creates any webview.
+   // Pushed as a command because the plugin config Tauri forwards to `load()` comes
+   // from `tauri.conf.json`, which a builder value cannot ride. What keeps `configure`
+   // unreachable from JS is the ACL, not its absence from `generate_handler!` — that
+   // absence is what routes it to native. The invariant is that it never enters COMMANDS.
    //
-   // What keeps `configure` unreachable from JS is the ACL, not its absence from
-   // `generate_handler!` — absence is what routes to native, as `registerListener`
-   // does. The invariant is that `configure` never enters COMMANDS.
+   // Invoked unconditionally, even with nothing to set: both natives build their
+   // download manager on first touch, and this is what touches it first — before
+   // `load(webView)`, which Tauri defers until the webview exists. Skipping it would
+   // hand that first touch to another caller, and on iOS delay the background
+   // `URLSession` that restores in-flight downloads.
    //
-   // A transport failure aborts launch, deliberately: with `release_max_level_off`,
-   // "log and continue" would ship the wrong agent silently.
-   if let Some(user_agent) = user_agent {
-      download.configure(&user_agent)?;
-   }
+   // A transport failure aborts launch deliberately: under `release_max_level_off`,
+   // "log and continue" would ship the wrong agent or the wrong store silently.
+   download.configure(user_agent, store_dir)?;
 
    Ok(download)
 }
@@ -48,12 +50,17 @@ impl<R: Runtime> Download<R> {
    ///
    /// Deliberately not public: it is only correct to call once, before any download
    /// exists. A later change would reach Android only for work enqueued after it and
-   /// iOS only for newly created tasks, which is not a contract worth offering.
+   /// iOS only for newly created tasks, which is not a contract worth offering. The
+   /// store directory is stricter still — both natives read it when they construct
+   /// their store, so a later call could not move an already-open file.
    ///
    /// # Arguments
-   /// - `user_agent` - The user agent sent with every download request.
+   /// - `user_agent` - The user agent sent with every download request, or `None` to
+   ///   leave the platform's own default.
+   /// - `store_dir` - The directory holding `downloads.json`, or `None` to leave the
+   ///   platform's own default.
    ///
-   fn configure(&self, user_agent: &str) -> crate::Result<()> {
+   fn configure(&self, user_agent: Option<String>, store_dir: Option<String>) -> crate::Result<()> {
       // A bare `invoke.resolve()` sends the literal `null` on both platforms, which
       // is what `()` decodes from. Anything else here would fail to deserialize.
       self
@@ -61,7 +68,8 @@ impl<R: Runtime> Download<R> {
          .run_mobile_plugin(
             "configure",
             ConfigArgs {
-               user_agent: user_agent.to_string(),
+               user_agent,
+               store_dir,
             },
          )
          .map_err(Into::into)

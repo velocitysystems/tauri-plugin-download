@@ -239,8 +239,20 @@ impl<R: Runtime> Builder<R> {
 
             #[cfg(mobile)]
             {
+               // The bridge to native is JSON, so the directory has to be UTF-8. A path
+               // that is not fails here rather than being dropped, which would leave the
+               // store at the platform default with nothing having failed.
+               let store_dir = match config.store_dir {
+                  Some(dir) => Some(
+                     dir.to_str()
+                        .ok_or_else(|| format!("Store directory is not valid UTF-8: {:?}", dir))?
+                        .to_string(),
+                  ),
+                  None => None,
+               };
+
                // Mobile download management is handled natively by the platform plugin.
-               let download = mobile::init(app, _api, user_agent)?;
+               let download = mobile::init(app, _api, user_agent, store_dir)?;
                app.manage(download);
             }
 
