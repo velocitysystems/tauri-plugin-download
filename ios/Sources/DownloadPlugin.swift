@@ -11,8 +11,12 @@ class PathArgs: Decodable {
 ///
 /// Named for the payload rather than the setting so a second builder option is a new
 /// field here, not a second command.
+///
+/// Every field is optional because the command is invoked unconditionally: an absent
+/// value means "keep the platform default", not a malformed call.
 class ConfigArgs: Decodable {
-   let userAgent: String
+   let userAgent: String?
+   let storeDir: String?
 }
 
 class CreateArgs: Decodable {
@@ -22,13 +26,22 @@ class CreateArgs: Decodable {
 }
 
 class DownloadPlugin: Plugin {
-   let downloadManager = DownloadManager.shared
+   /// Computed rather than stored, so constructing the plugin does not construct the
+   /// manager. `configure` has to set the store directory before anything reaches
+   /// `shared`, because the manager's store opens its file in its own initializer.
+   ///
+   /// Thread-safe lazy construction still comes from `static let shared` rather than
+   /// from a `lazy var`, which is not thread-safe on a class.
+   var downloadManager: DownloadManager { DownloadManager.shared }
 
-   override init()
-   {
-      super.init()
+   /// Subscribed here rather than in `init`, mirroring Android's `load(webView)`.
+   ///
+   /// Moving it off `init` is what keeps the manager unconstructed until `configure`
+   /// runs. Nothing is missed by waiting: `trigger` delivers to listeners registered
+   /// from JS, so before a webview exists there are none and it is already a no-op.
+   override func load(webview: WKWebView) {
       Task {
-          for await download in DownloadManager.shared.changed {
+          for await download in self.downloadManager.changed {
              try? self.trigger("changed", data: download);
 #if DEBUG
              Logger.debug("[\(download.path.lastPathComponent)] \(download.status) - \(String(format: "%.0f", download.progress))% (\(download.receivedBytes)/\(download.totalBytes.map { String($0) } ?? "unknown") bytes)")
@@ -42,8 +55,22 @@ class DownloadPlugin: Plugin {
    /// Invoked by the Rust plugin during setup rather than from the webview: Tauri
    /// fills the config it hands to `load(webview:)` from `tauri.conf.json`, so a
    /// value set on the Rust builder can only arrive as a command.
+   ///
+   /// This is also where the download manager is first built, which is load-bearing
+   /// rather than incidental. The store directory has to be set before `shared` is
+   /// touched, and Tauri defers `load(webview:)` until the webview exists — after
+   /// plugin registration — so this command runs first. The Rust side invokes it
+   /// unconditionally, with both fields nil when nothing is configured, to keep that
+   /// true and to leave the background `URLSession` restoring as early as it does now.
    @objc public func configure(_ invoke: Invoke) throws {
       let args = try invoke.parseArgs(ConfigArgs.self)
+
+      // Before the `Task`, and before any use of `downloadManager`: the manager builds
+      // its store — reading the file — during its own initialization.
+      if let storeDir = args.storeDir {
+         DownloadManager.setStoreDirectory(URL(fileURLWithPath: storeDir, isDirectory: true))
+      }
+
       Task {
          await self.downloadManager.setUserAgent(args.userAgent)
          // No response payload anchors this call inside the Task the way every other

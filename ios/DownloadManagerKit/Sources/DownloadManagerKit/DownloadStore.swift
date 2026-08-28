@@ -12,13 +12,12 @@ actor DownloadStore {
    private var downloads: [DownloadRecord]
    private let savePath: URL
 
-   private static var defaultSavePath: URL {
-      FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("downloads.json")
-   }
-
    /// - Parameter savePath: Where the store is persisted. Injectable so tests can
    ///   work against a temporary file rather than the app's Documents directory.
-   init(savePath: URL = DownloadStore.defaultSavePath) {
+   ///   Defaults through [`StoreLocation`], which is what a configured directory
+   ///   reaches this class by — the path has to be known here, since the file is read
+   ///   below rather than on first use.
+   init(savePath: URL = StoreLocation.savePath()) {
       self.savePath = savePath
       self.downloads = DownloadStore.load(from: savePath)
    }
@@ -126,6 +125,17 @@ actor DownloadStore {
       let encoder = JSONEncoder()
       do {
          let data = try encoder.encode(downloads)
+
+         // `write` does not create intermediate directories, and a configured store
+         // directory normally does not exist on a first launch. Without this, every
+         // save fails into the `catch` below and the store is never written — silently,
+         // since the in-memory array keeps serving `list` for the rest of the session.
+         // Desktop creates it in `save_inner`; Android gets it from `AtomicFile`.
+         try FileManager.default.createDirectory(
+            at: savePath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+         )
+
          try data.write(to: savePath, options: .atomic)
       } catch {
          os_log(.error, log: Log.downloadStore, "Failed to save download store: %{public}@", error.localizedDescription)
