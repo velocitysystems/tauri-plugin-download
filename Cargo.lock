@@ -4104,6 +4104,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-plugin",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
 ]
