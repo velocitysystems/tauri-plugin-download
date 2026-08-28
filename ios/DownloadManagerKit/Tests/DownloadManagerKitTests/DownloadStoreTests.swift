@@ -93,6 +93,26 @@ final class DownloadStoreTests: XCTestCase {
       XCTAssertEqual(DownloadStore.load(from: savePath).first?.receivedBytes, 42)
    }
 
+   func testAppendPersistsIntoADirectoryThatDoesNotExistYet() async {
+      // The configured-store-location case, and the one `setUp`'s pre-created
+      // directory hides: `Data.write` does not create intermediate directories, so
+      // without `save` creating them every write fails into a log line while the
+      // in-memory array keeps serving `list` — the store simply never appears.
+      let directory = FileManager.default.temporaryDirectory
+         .appendingPathComponent(UUID().uuidString)
+         .appendingPathComponent("nested")
+      let path = directory.appendingPathComponent("downloads.json")
+
+      addTeardownBlock {
+         try? FileManager.default.removeItem(at: directory.deletingLastPathComponent())
+      }
+
+      let store = DownloadStore(savePath: path)
+      await store.append(record(path: "a.mp4", received: 42))
+
+      XCTAssertEqual(DownloadStore.load(from: path).first?.receivedBytes, 42)
+   }
+
    func testUpdateWithoutPersistLeavesTheFileUntouched() async throws {
       let store = DownloadStore(savePath: savePath)
       await store.append(record(path: "a.mp4", received: 42))

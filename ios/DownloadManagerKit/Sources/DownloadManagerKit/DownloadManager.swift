@@ -146,6 +146,26 @@ public final class DownloadManager: NSObject {
    }
 
    /**
+    Sets the directory holding the download store.
+
+    Static, and unlike `setUserAgent` must be called *before* `shared` is first touched:
+    the store opens its file as the manager initializes, so there is nothing left to move
+    afterwards. A late call throws rather than reporting a success it did not deliver.
+
+    Creates the directory, so a location the app cannot write to fails here rather than
+    silently costing every record later — `save` can only log a write failure.
+
+    Unset, the store stays in the app's Application Support directory.
+
+    - Parameter url: The directory to persist the store in.
+    - Throws: `StoreLocationError.alreadyResolved` if the store has already opened its
+      file, or the underlying error if the directory cannot be created.
+    */
+   public static func setStoreDirectory(_ url: URL) throws {
+      try StoreLocation.set(url)
+   }
+
+   /**
     Starts a download operation.
 
     - Parameter path: The download path.
