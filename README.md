@@ -120,52 +120,65 @@ fn main() {
 Use `Builder` instead of `init()` to configure the plugin. `init()` is shorthand for
 `Builder::new().build()`.
 
-```rust
-fn main() {
-   tauri::Builder::default()
-      .plugin(
-         tauri_plugin_download::Builder::new()
-            .user_agent("my-app/1.0")
-            .build(),
-      )
-      .run(tauri::generate_context!())
-      .expect("error while running tauri application");
-}
-```
+#### Builder options
 
 | Method | Type | Default | Description |
 | --- | --- | --- | --- |
 | `user_agent` | `impl Into<String>` | None | `User-Agent` sent with every download request |
+| `on_setup` | `FnOnce(&AppHandle, &mut SetupConfig) -> Result<(), Box<dyn Error>>` | None | Hook for settings that need the app instance |
 
-#### User agent
+#### Setup options
 
-The setting is opt-in. Leaving it unset keeps whatever each platform's own HTTP stack
-sends, which is not the same on all three:
+Set inside `on_setup`, which runs once the app exists and `app.path()` is available:
 
-| Platform | Transport | User agent when unset |
+| Method | Type | Default | Description |
+| --- | --- | --- | --- |
+| `store_dir` | `impl Into<PathBuf>` | Platform-specific | Directory holding `downloads.json` |
+
+Full example:
+
+```rust
+use tauri::Manager;
+
+let plugin = tauri_plugin_download::Builder::new()
+   .user_agent("my-app/1.0")
+   .on_setup(|app, config| {
+      config.store_dir(app.path().app_data_dir()?.join("downloads"));
+      Ok(())
+   })
+   .build();
+```
+
+#### Platform defaults
+
+Both settings are opt-in. Left unset, each platform keeps its own:
+
+| Platform | Store location | User agent |
 | --- | --- | --- |
-| Desktop | `reqwest` | none |
-| Android | OkHttp | `okhttp/<version>` |
-| iOS | `URLSession` | `<app>/<version> CFNetwork/… Darwin/…` |
+| Desktop | `app_data_dir()/downloads.json` | none |
+| Android | `filesDir/downloads.json` | `okhttp/<version>` |
+| iOS | `Documents/downloads.json` | `<app>/<version> CFNetwork/… Darwin/…` |
 
-Setting it makes all three send the same value. It must be printable ASCII or a
-horizontal tab — Android's HTTP client rejects anything above `~`, so that is the rule
-all three share. An invalid value fails plugin initialization rather than surfacing
-later as a failed download on one platform. An empty value is accepted — it is legal
-HTTP, and sends an empty header rather than none.
+Key behaviors:
 
-A download that outlives the process picks up a changed user agent differently on each
-platform:
+   * **The store is not migrated.** Changing `store_dir` in a later release leaves the
+     old records where they are, invisible to the plugin — treat it as discarding the
+     download history
+   * `store_dir` must be absolute, and on mobile inside the app sandbox; a relative path
+     fails plugin initialization
+   * **Keep `store_dir` on internal storage on Android.** The store lists every
+     download's URL and local path, so on external or shared storage it is readable by
+     any app holding storage access on pre-scoped-storage devices. The default,
+     `filesDir`, is app-private
+   * The directory need not exist — the store creates it on the first write
+   * Returning `Err` from `on_setup` aborts startup
+   * `user_agent` must be printable ASCII or horizontal tab, the rule all three HTTP
+     stacks share; anything else fails plugin initialization
+   * An empty `user_agent` is accepted and sends an empty header rather than none
+   * A download resumed after a relaunch uses the new run's user agent on desktop and
+     Android; iOS keeps the value the download started with when it resumes from resume
+     data
 
-   * **Desktop** builds one HTTP client per process, so a download resumed after a
-     relaunch uses the new run's value.
-   * **Android** reads the current value whenever a download is enqueued, an explicit
-     `resume` included, so it behaves like desktop. Only when WorkManager re-runs a
-     stranded worker itself — in a process where the plugin never loaded — does it fall
-     back to the value captured in the work request.
-   * **iOS** keeps the value a download started with when it resumes from resume data,
-     which carries the original request. Without resume data — from a server with no
-     byte-range support, say — it restarts from zero and picks up the current value.
 
 ### API
 
@@ -461,15 +474,14 @@ and run on an emulator or device.
 
 ### Testing the Network Policy
 
-No SIM is needed: mark the Wi-Fi network as metered from its settings page — under
-Network & internet on stock Android, Connections on One UI — where the option reads
-"Treat as metered" or "Metered". The
-example app's "Allow metered networks" toggle sets `allowMetered` on the downloads it
-creates, and each row shows the policy it was created with.
+No SIM needed. Mark the Wi-Fi network as metered from its settings page — Network &
+internet on stock Android, Connections on One UI — where the option reads "Treat as
+metered". The example app's "Allow metered networks" toggle sets `allowMetered` on the
+downloads it creates.
 
-With the toggle off, a download started on a metered network holds at zero bytes and
-begins once the network is marked unmetered. Marking the network metered mid-transfer
-stalls it, and it continues by itself a backoff delay later.
+With the toggle off, a download holds at zero bytes until the network is marked
+unmetered. Marking it metered mid-transfer stalls the download; it continues by itself
+a backoff delay later.
 
 ## iOS Support
 
@@ -492,20 +504,19 @@ select a simulator or device, and run.
 
 ### Testing the Network Policy
 
-No SIM is needed, but a real device is: Low Data Mode cannot be set on a simulator.
+No SIM needed, but a real device is — Low Data Mode cannot be set on a simulator.
 Toggle it under Settings → Wi-Fi → the ⓘ beside your network → Low Data Mode, which
 trips `allowsConstrainedNetworkAccess`. The example app's "Allow metered networks"
-toggle sets `allowMetered` on the downloads it creates, and each row shows the policy
-it was created with.
+toggle sets `allowMetered` on the downloads it creates.
 
-With the toggle off, a download started in Low Data Mode holds at zero bytes and
-begins once Low Data Mode is off. Turning it on mid-transfer stalls the download
-without leaving `inProgress`, and it continues by itself once it is off again.
+With the toggle off, a download holds at zero bytes until Low Data Mode is off.
+Turning it on mid-transfer stalls the download without leaving `inProgress`; it
+continues by itself once off again.
 
 Worth repeating on new iOS majors: pause a restricted download, turn Low Data Mode on,
-then resume. It should stay stalled. Resuming goes through
+then resume — it should stay stalled. Resume goes through
 `downloadTask(withResumeData:)`, which carries the policy in undocumented resume data,
-so this is the check that catches a silent regression there.
+so this is the check that catches a silent regression.
 
 ### Tauri Apps
 
