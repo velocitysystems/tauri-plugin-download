@@ -2,11 +2,13 @@ package org.silvermine.downloadmanager
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import kotlinx.serialization.SerializationException
 import org.junit.Test
+import java.io.File
 
 /**
  * Covers the store's decode and encode, which is where a malformed file decides
@@ -142,5 +144,27 @@ class DownloadStoreTest {
       assertFalse(encoded.contains("totalBytes"))
       assertEquals(listOf(record), decoded)
       assertNull(decoded.first().totalBytes)
+   }
+
+   @Test
+   fun `the store file is resolved inside the directory it was given`() {
+      // The one step on Android that honours a configured directory rather than just
+      // carrying it. Hardcode a directory here and no other Kotlin test fails.
+      val configured = File("/data/user/0/com.example/files/downloads")
+
+      assertEquals(
+         File("/data/user/0/com.example/files/downloads/downloads.json"),
+         DownloadStore.storeFile(configured),
+      )
+   }
+
+   @Test
+   fun `two directories resolve to two different store files`() {
+      // Pairs with the case above, which a `storeFile` returning a fixed path would
+      // still satisfy.
+      assertNotEquals(
+         DownloadStore.storeFile(File("/data/user/0/com.example/files")),
+         DownloadStore.storeFile(File("/data/user/0/com.example/downloads")),
+      )
    }
 }
