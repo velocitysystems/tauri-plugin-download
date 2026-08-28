@@ -41,7 +41,20 @@ internal class DownloadWorker(
       val url = inputData.getString(KEY_URL) ?: return Result.failure()
       val path = inputData.getString(KEY_PATH) ?: return Result.failure()
 
-      val manager = DownloadManager.getInstance(applicationContext)
+      // The store directory comes from the input data rather than the manager, for the
+      // same reason the user agent does below: a worker re-run after process death has
+      // no loaded plugin to have configured it, and would otherwise open the default
+      // store and write this download's progress where the app never reads it.
+      //
+      // Refused rather than defaulted, as the url and path above are. Only a work
+      // request enqueued before this key existed can lack it, and running it would
+      // build the process singleton at the default directory — so a plugin that
+      // configured one would be handed the wrong store for the rest of the session.
+      // The record survives: reconciliation reverts it on the next manager init, and
+      // the download can be started again.
+      val storeDir = inputData.getString(KEY_STORE_DIR)?.let { File(it) }
+         ?: return Result.failure()
+      val manager = DownloadManager.getInstance(applicationContext, storeDir)
       val store = manager.store
       val tempFile = File("$path$DOWNLOAD_SUFFIX")
 
@@ -397,6 +410,7 @@ internal class DownloadWorker(
       const val KEY_URL = "download_url"
       const val KEY_PATH = "download_path"
       const val KEY_USER_AGENT = "download_user_agent"
+      const val KEY_STORE_DIR = "download_store_dir"
 
       /**
        * Builds the download request.

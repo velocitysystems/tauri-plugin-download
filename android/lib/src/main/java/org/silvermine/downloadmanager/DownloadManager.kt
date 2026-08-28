@@ -21,8 +21,8 @@ import java.io.File
  *
  * Mirrors the iOS DownloadManager and Rust Download<R> API surface.
  */
-class DownloadManager private constructor(context: Context) {
-   internal val store = DownloadStore(context)
+class DownloadManager private constructor(context: Context, private val storeDir: File) {
+   internal val store = DownloadStore(storeDir)
    private val workManager = WorkManager.getInstance(context)
 
    /**
@@ -254,7 +254,7 @@ class DownloadManager private constructor(context: Context) {
    private fun enqueueDownload(record: DownloadRecord) {
       val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
          .setConstraints(constraintsFor(record.options))
-         .setInputData(inputDataFor(record, userAgent))
+         .setInputData(inputDataFor(record, userAgent, storeDir))
          .addTag(WORK_TAG)
          .build()
 
@@ -271,17 +271,24 @@ class DownloadManager private constructor(context: Context) {
       /**
        * Builds the work request's input data.
        *
-       * The user agent is captured here rather than read by the worker: WorkManager
-       * can re-run a stranded worker in a fresh process with no Tauri activity, where
-       * the plugin never loads and [userAgent] is null. Only input data survives.
+       * The user agent and store directory are captured here rather than read by the
+       * worker: WorkManager can re-run a stranded worker in a fresh process with no
+       * Tauri activity, where the plugin never loads and neither has been configured.
+       * Only input data survives.
+       *
+       * The store directory matters more than the user agent does. An unconfigured
+       * worker sends the wrong `User-Agent`; one that opened the default store would
+       * write a second `downloads.json` and record every byte of progress somewhere the
+       * app never reads.
        *
        * Built here for the same reason as [constraintsFor].
        */
-      internal fun inputDataFor(record: DownloadRecord, userAgent: String?): Data =
+      internal fun inputDataFor(record: DownloadRecord, userAgent: String?, storeDir: File): Data =
          workDataOf(
             DownloadWorker.KEY_URL to record.url,
             DownloadWorker.KEY_PATH to record.path,
             DownloadWorker.KEY_USER_AGENT to userAgent,
+            DownloadWorker.KEY_STORE_DIR to storeDir.absolutePath,
          )
 
       /**
@@ -340,13 +347,45 @@ class DownloadManager private constructor(context: Context) {
       /**
        * Returns the singleton DownloadManager instance.
        * Must be called with an application context.
+       *
+       * @param context The application context.
+       * @param storeDir The directory holding the download store, or `null` for the
+       *    app's internal storage. Honoured only when this call is the one that builds
+       *    the instance: [DownloadStore] reads its file in its own constructor and
+       *    [reconcileStoreOnInit] consumes it before this returns, so a store cannot be
+       *    moved afterwards. A later call naming a different directory is logged rather
+       *    than silently ignored — a store quietly left at the default is the failure
+       *    this parameter exists to prevent.
        */
-      fun getInstance(context: Context): DownloadManager {
-         return instance ?: synchronized(this) {
-            instance ?: DownloadManager(context.applicationContext).also {
+      @JvmOverloads
+      fun getInstance(context: Context, storeDir: File? = null): DownloadManager {
+         val existing = instance ?: synchronized(this) {
+            instance ?: DownloadManager(
+               context.applicationContext,
+               storeDir ?: defaultStoreDir(context.applicationContext),
+            ).also {
                instance = it
             }
          }
+
+         if (storeDir != null && storeDir != existing.storeDir) {
+            Log.w(
+               TAG,
+               "Ignoring store directory $storeDir; already built at ${existing.storeDir}",
+            )
+         }
+
+         return existing
       }
+
+      /**
+       * The store directory used when none is configured.
+       *
+       * Internal storage, so the store stays app-private and needs no permission.
+       *
+       * @param context The application context.
+       * @return The default store directory.
+       */
+      internal fun defaultStoreDir(context: Context): File = context.filesDir
    }
 }

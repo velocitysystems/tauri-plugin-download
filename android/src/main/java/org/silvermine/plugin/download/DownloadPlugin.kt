@@ -50,6 +50,7 @@ class CreateOptionsArgs {
 @InvokeArg
 class ConfigArgs {
    var userAgent: String? = null
+   var storeDir: String? = null
 }
 
 @InvokeArg
@@ -62,7 +63,24 @@ class CreateArgs {
 @TauriPlugin
 class DownloadPlugin(activity: Activity) : Plugin(activity) {
    private val json = Json { encodeDefaults = true }
-   private val downloadManager by lazy { DownloadManager.getInstance(activity.applicationContext) }
+
+   /**
+    * Held because `Plugin.activity` is `private`, so a subclass can reach it from an
+    * initializer — where the constructor parameter is still in scope — but not from a
+    * member. The application context rather than the activity, which must not outlive
+    * its own lifecycle.
+    */
+   private val appContext = activity.applicationContext
+
+   /**
+    * Computed rather than `by lazy`: [configure] has to build the instance itself, to
+    * pass the store directory into a constructor that reads it. [DownloadManager
+    * .getInstance] is already a double-checked singleton, so it — not a second lazy
+    * delegate racing with it — is the one place construction is synchronized.
+    */
+   private val downloadManager: DownloadManager
+      get() = DownloadManager.getInstance(appContext)
+
    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
    override fun load(webView: WebView) {
@@ -93,14 +111,23 @@ class DownloadPlugin(activity: Activity) : Plugin(activity) {
     * Invoked by the Rust plugin during setup rather than from the webview: Tauri
     * fills the config it hands to [load] from `tauri.conf.json`, so a value set on
     * the Rust builder can only arrive as a command.
+    *
+    * This is where the download manager is built, and that is load-bearing rather than
+    * incidental. The store directory is read by [DownloadStore]'s constructor, so it
+    * has to reach [DownloadManager.getInstance] on the call that creates the singleton.
+    * Tauri defers [load] until the webview exists, which is after plugin registration,
+    * so this command runs first — and the Rust side invokes it unconditionally, with
+    * both fields null when nothing is configured, to keep that true.
+    *
+    * Every argument is optional: absent means "keep the platform default", not a
+    * malformed call.
     */
    @Command
    fun configure(invoke: Invoke) {
       val args = invoke.parseArgs(ConfigArgs::class.java)
-      val userAgent = args.userAgent
-         ?: return invoke.reject("Missing required argument: userAgent")
+      val manager = DownloadManager.getInstance(appContext, args.storeDir?.let { File(it) })
 
-      downloadManager.userAgent = userAgent
+      args.userAgent?.let { manager.userAgent = it }
       invoke.resolve()
    }
 
@@ -160,8 +187,16 @@ class DownloadPlugin(activity: Activity) : Plugin(activity) {
       }
 
       scope.launch {
-         val response = withContext(Dispatchers.IO) { downloadManager.create(path, url, options) }
-         invoke.resolve(JSObject(json.encodeToString(response)))
+         // Guarded like every sibling command. Without this the store's own write
+         // failures — an unwritable configured directory reaches `AtomicFile.startWrite`
+         // as an IOException — escape to a scope with no handler and take the app down,
+         // where desktop returns the error to the caller.
+         try {
+            val response = withContext(Dispatchers.IO) { downloadManager.create(path, url, options) }
+            invoke.resolve(JSObject(json.encodeToString(response)))
+         } catch (e: Exception) {
+            invoke.reject(e.message)
+         }
       }
    }
 

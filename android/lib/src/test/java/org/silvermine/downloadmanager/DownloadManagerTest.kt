@@ -4,6 +4,7 @@ import androidx.work.NetworkType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.io.File
 
 class DownloadManagerTest {
 
@@ -87,7 +88,11 @@ class DownloadManagerTest {
 
    @Test
    fun `a configured user agent is captured in the work request`() {
-      val data = DownloadManager.inputDataFor(inProgressRecord(), userAgent = "my-app/1.0")
+      val data = DownloadManager.inputDataFor(
+         inProgressRecord(),
+         userAgent = "my-app/1.0",
+         storeDir = File("/tmp/store"),
+      )
 
       assertEquals("my-app/1.0", data.getString(DownloadWorker.KEY_USER_AGENT))
       assertEquals("http://example.com/file.mp4", data.getString(DownloadWorker.KEY_URL))
@@ -96,12 +101,34 @@ class DownloadManagerTest {
 
    @Test
    fun `no user agent stores a null value`() {
-      // The key is present with a null value, not absent: measured on work-runtime
-      // 2.9.1, `workDataOf(k to null)` gives size()==3 and containsKey()==true. Either
-      // way `getString` returns null, which the worker treats as "send no User-Agent",
-      // leaving OkHttp's default.
-      val data = DownloadManager.inputDataFor(inProgressRecord(), userAgent = null)
+      // The key is present with a null value rather than absent — asserted on `size`
+      // below rather than claimed in a comment, since `getString` returns null either
+      // way and the worker reads that as "send no User-Agent", leaving OkHttp's
+      // default. If `workDataOf` ever drops null entries, this is what catches it.
+      val data = DownloadManager.inputDataFor(
+         inProgressRecord(),
+         userAgent = null,
+         storeDir = File("/tmp/store"),
+      )
 
+      assertEquals(4, data.size())
       assertNull(data.getString(DownloadWorker.KEY_USER_AGENT))
+   }
+
+   @Test
+   fun `the store directory is captured in the work request`() {
+      // The worker opens the store from this, not from the manager: a re-run after
+      // process death has no loaded plugin to have configured one. Without the key it
+      // would open the default store and write progress where the app never reads it.
+      val data = DownloadManager.inputDataFor(
+         inProgressRecord(),
+         userAgent = null,
+         storeDir = File("/data/user/0/com.example/files/downloads"),
+      )
+
+      assertEquals(
+         "/data/user/0/com.example/files/downloads",
+         data.getString(DownloadWorker.KEY_STORE_DIR),
+      )
    }
 }

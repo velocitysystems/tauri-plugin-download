@@ -1,6 +1,5 @@
 package org.silvermine.downloadmanager
 
-import android.content.Context
 import android.util.AtomicFile
 import android.util.Log
 import kotlinx.serialization.encodeToString
@@ -13,9 +12,13 @@ import java.io.File
  * All public methods are synchronized to ensure consistency when accessed
  * from multiple threads (e.g. WorkManager workers and the main thread).
  * Mirrors the iOS DownloadStore actor pattern.
+ *
+ * @param directory The directory holding [STORE_FILENAME]. Taken rather than derived
+ *    from a Context so the location is configurable; the caller resolves the default.
+ *    Read here and nowhere else, which is why it cannot be changed after construction.
  */
-internal class DownloadStore(context: Context) {
-   private val file = AtomicFile(File(context.filesDir, STORE_FILENAME))
+internal class DownloadStore(directory: File) {
+   private val file = AtomicFile(File(directory, STORE_FILENAME))
    private val downloads = mutableMapOf<String, DownloadRecord>()
 
    init {
