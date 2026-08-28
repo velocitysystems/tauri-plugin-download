@@ -38,12 +38,16 @@ mod mobile_types {
 
    /// Settings pushed to the native plugin once at startup.
    ///
-   /// Named for the payload rather than the setting so a second builder option is a
-   /// new field here, not a second command mirrored across Kotlin and Swift.
+   /// Named for the payload rather than the setting, so a second builder option is a
+   /// new field here rather than a second command mirrored across Kotlin and Swift.
+   ///
+   /// Every field is optional: the command is invoked unconditionally, so absent means
+   /// "keep the platform default", not a malformed call.
    #[derive(Serialize)]
    #[serde(rename_all = "camelCase")]
    pub struct ConfigArgs {
-      pub user_agent: String,
+      pub user_agent: Option<String>,
+      pub store_dir: Option<String>,
    }
 
    #[derive(Serialize)]
