@@ -4,9 +4,6 @@
 
 State-driven, resumable download API for Tauri 2.x apps.
 
-This plugin provides a cross-platform download interface with resumable downloads,
-byte-count progress tracking, and proper resource management.
-
 [ci-badge]: https://github.com/silvermine/tauri-plugin-download/actions/workflows/ci.yml/badge.svg
 [ci-url]: https://github.com/silvermine/tauri-plugin-download/actions/workflows/ci.yml
 
@@ -33,7 +30,6 @@ byte-count progress tracking, and proper resource management.
    * Parallel, resumable download support
    * Persistable, thread-safe store
    * State, byte count, and progress notifications
-   * Cross-platform support (Linux, Windows, macOS, Android, iOS)
 
 | Platform  | Supported |
 | --------- | --------- |
@@ -308,22 +304,19 @@ Only mobile has an OS scheduler to defer to, so desktop refuses where mobile wai
 | iOS | Resolves, status `InProgress`; the background `URLSession` task waits, transferring nothing. | Stalls, then continues on its own. |
 | Android | Resolves, status `InProgress`; WorkManager holds the work request. | Stalls, then continues on its own — see below. |
 
-Neither platform needs a call from you to recover, but they differ. iOS leaves the task
+Recovery needs no call from you on either platform, but they differ. iOS leaves the task
 alone and it continues when a network satisfies it. Android's worker cannot survive the
 connection going away, so WorkManager retries it on the same constraint, resuming from
 the partial file — expect it to lag by the backoff delay rather than restarting the
 moment the network qualifies.
 
-Two caveats on Android. If the constraint tracker stops the worker before the connection
-drops — the two race — the download reports `Paused` before the retry moves it back to
-`InProgress`.
-
-The same happens while work is merely waiting, which is ordinary rather than a race: a
-record held on the unmetered constraint or in a retry backoff stays `InProgress` with no
-worker running. Restart the app then and the plugin reconciles it to `Paused`, or `Idle`
-at zero bytes when no partial file survives, before the pending work moves it back.
-Reconciliation emits no event, so the stale value arrives through the next `get()` or
-`list()`.
+Android can also report `Paused` mid-hold: if the constraint tracker stops the worker
+before the connection drops — the two race — the retry moves it back to `InProgress`. A
+record merely waiting, on the unmetered constraint or in a retry backoff, stays
+`InProgress` with no worker running; restart the app then and the plugin reconciles it to
+`Paused`, or `Idle` at zero bytes when no partial file survives, before the pending work
+moves it back. Reconciliation emits no event, so the stale value arrives through the next
+`get()` or `list()`.
 
 So treat `Paused` and `Idle` as "not currently transferring" rather than "waiting for the
 user", and drive recovery off events. No bytes are lost either way. Constraint holds are
@@ -343,11 +336,11 @@ options.
 
 #### Listen for progress notifications
 
-Listeners can be attached to downloads in any status, including `Pending`.
-This allows you to set up listeners before creating the download.
-Each download state includes `receivedBytes`, `totalBytes`, and `progress`.
-When the server does not provide a content length, `totalBytes` is `null`;
-`progress` remains `0` until the terminal `Completed` event, where it is `100`.
+Listeners can be attached to downloads in any status, including `Pending`, so they can
+be set up before the download is created. Each download state includes `receivedBytes`,
+`totalBytes`, and `progress`. When the server does not provide a content length,
+`totalBytes` is `null`; `progress` remains `0` until the terminal `Completed` event,
+where it is `100`.
 
 ```ts
 import { get, DownloadStatus } from 'tauri-plugin-download';
@@ -447,9 +440,6 @@ it('starts a mocked download', async () => {
    }
 });
 ```
-
-The mock helper currently simulates the desktop event flow and returns `false` for
-`is_native`.
 
 ## Android Support
 
@@ -590,9 +580,8 @@ a backoff delay later.
 
 ## iOS Support
 
-On iOS, this plugin uses `URLSession` with a background configuration, which allows
-downloads
-to continue even when the app is suspended or terminated by the system.
+On iOS, this plugin uses `URLSession` with a background configuration, so downloads
+continue even when the app is suspended or terminated by the system.
 
 ### How It Works
 
@@ -625,23 +614,16 @@ so this is the check that catches a silent regression.
 
 ### Background Downloads in Tauri Apps
 
-Background downloads work automatically in Tauri apps. When the app resumes, all delegate
-callbacks are delivered and state is properly reconciled.
+Background downloads work automatically in Tauri apps: when the app resumes, all delegate
+callbacks are delivered and state is reconciled.
 
-**Note**: Tauri's iOS architecture doesn't currently expose the `AppDelegate` hook for
-`handleEventsForBackgroundURLSession`. Without calling this completion handler, iOS cannot
-determine when background event processing is complete. This may cause iOS to:
+**Note**: Tauri does not expose the `AppDelegate` hook for
+`handleEventsForBackgroundURLSession`, so iOS is never told that background event
+processing finished. It may then keep the app running longer than necessary, skip the
+app-switcher snapshot, or deprioritize future background execution. Downloads themselves
+are unaffected — iOS delivers every pending callback when the app resumes.
 
-   * Keep the app running longer than necessary (wasting battery)
-   * Skip taking a UI snapshot for the app switcher
-   * Deprioritize future background execution for this app
-
-In practice, this has minimal impact for typical download scenarios since iOS delivers
-all pending delegate callbacks when the app resumes regardless of whether the completion
-handler is called.
-
-If Tauri exposes `AppDelegate` hooks in the future, add this for optimal background
-handling:
+If Tauri exposes `AppDelegate` hooks in the future, add:
 
 ```swift
 import DownloadManagerKit
