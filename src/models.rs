@@ -1,5 +1,5 @@
-// Desktop model types
-#[cfg(desktop)]
+// Shared with `download-manager` on every platform rather than mirrored per platform:
+// a second definition of these shapes could drift unnoticed.
 pub use download_manager::{CreateOptions, DownloadActionResponse, DownloadItem};
 
 /// Wire form of [`CreateOptions`] for the `create` command. TypeScript declares
@@ -23,12 +23,9 @@ impl From<CreateOptionsArgs> for CreateOptions {
 // Mobile model types (iOS, Android)
 #[cfg(mobile)]
 mod mobile_types {
-   use serde::{Deserialize, Serialize};
+   use serde::Serialize;
 
-   /// Shared with desktop rather than mirrored. The type sits on the bridge in both
-   /// directions now, and a second definition of it — with its own copy of the
-   /// default — could drift without the compiler, the tests, or CI noticing.
-   pub use download_manager::CreateOptions;
+   use super::CreateOptions;
 
    #[derive(Serialize)]
    #[serde(rename_all = "camelCase")]
@@ -57,65 +54,10 @@ mod mobile_types {
       pub url: String,
       pub options: CreateOptions,
    }
-
-   #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-   #[serde(rename_all = "camelCase")]
-   pub struct DownloadItem {
-      pub url: String,
-      pub path: String,
-      pub options: CreateOptions,
-      pub received_bytes: u64,
-      pub total_bytes: Option<u64>,
-      pub progress: f64,
-      pub status: DownloadStatus,
-   }
-
-   #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-   #[serde(rename_all = "camelCase")]
-   pub enum DownloadStatus {
-      #[default]
-      Unknown,
-      Pending,
-      Idle,
-      InProgress,
-      Paused,
-      Canceled,
-      Completed,
-   }
-
-   #[derive(Debug, Clone, Serialize, Deserialize)]
-   #[serde(rename_all = "camelCase")]
-   pub struct DownloadActionResponse {
-      pub download: DownloadItem,
-      pub expected_status: DownloadStatus,
-      pub is_expected_status: bool,
-   }
-
-   impl DownloadActionResponse {
-      pub fn new(download: DownloadItem) -> Self {
-         let expected_status = download.status.clone();
-         Self {
-            download,
-            expected_status,
-            is_expected_status: true,
-         }
-      }
-
-      pub fn with_expected_status(download: DownloadItem, expected_status: DownloadStatus) -> Self {
-         let is_expected_status = download.status == expected_status;
-         Self {
-            download,
-            expected_status,
-            is_expected_status,
-         }
-      }
-   }
 }
 
 #[cfg(mobile)]
-pub use mobile_types::{
-   ConfigArgs, CreateArgs, CreateOptions, DownloadActionResponse, DownloadItem, PathArgs,
-};
+pub use mobile_types::{ConfigArgs, CreateArgs, PathArgs};
 
 #[cfg(test)]
 mod tests {
