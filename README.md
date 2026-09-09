@@ -10,6 +10,24 @@ byte-count progress tracking, and proper resource management.
 [ci-badge]: https://github.com/silvermine/tauri-plugin-download/actions/workflows/ci.yml/badge.svg
 [ci-url]: https://github.com/silvermine/tauri-plugin-download/actions/workflows/ci.yml
 
+## Contents
+
+   * [Features](#features)
+   * [Getting Started](#getting-started)
+   * [Install](#install)
+   * [Usage](#usage)
+      * [Prerequisites](#prerequisites)
+      * [Configuration](#configuration)
+      * [API](#api)
+      * [Testing with mocks](#testing-with-mocks)
+   * [Android Support](#android-support)
+      * [Manifest Declarations](#manifest-declarations)
+      * [Google Play Console](#google-play-console)
+   * [iOS Support](#ios-support)
+   * [Development Standards](#development-standards)
+   * [License](#license)
+   * [Contributing](#contributing)
+
 ## Features
 
    * Parallel, resumable download support
@@ -433,23 +451,6 @@ it('starts a mocked download', async () => {
 The mock helper currently simulates the desktop event flow and returns `false` for
 `is_native`.
 
-## Development Standards
-
-This project follows the
-[Silvermine standardization](https://github.com/silvermine/standardization)
-guidelines. Key standards include:
-
-   * **EditorConfig**: Consistent editor settings across the team
-   * **Markdownlint**: Markdown linting for documentation
-   * **Commitlint**: Conventional commit message format
-   * **Code Style**: 3-space indentation, LF line endings
-
-### Running Standards Checks
-
-```bash
-npm run standards
-```
-
 ## Android Support
 
 On Android, this plugin uses a pure Kotlin download manager library (`:lib` module)
@@ -622,7 +623,7 @@ then resume — it should stay stalled. Resume goes through
 `downloadTask(withResumeData:)`, which carries the policy in undocumented resume data,
 so this is the check that catches a silent regression.
 
-### Tauri Apps
+### Background Downloads in Tauri Apps
 
 Background downloads work automatically in Tauri apps. When the app resumes, all delegate
 callbacks are delivered and state is properly reconciled.
@@ -639,8 +640,6 @@ In practice, this has minimal impact for typical download scenarios since iOS de
 all pending delegate callbacks when the app resumes regardless of whether the completion
 handler is called.
 
-### Future Integration
-
 If Tauri exposes `AppDelegate` hooks in the future, add this for optimal background
 handling:
 
@@ -652,6 +651,23 @@ func application(_ application: UIApplication,
                  completionHandler: @escaping () -> Void) {
    DownloadManager.shared.setBackgroundCompletionHandler(completionHandler)
 }
+```
+
+## Development Standards
+
+This project follows the
+[Silvermine standardization](https://github.com/silvermine/standardization)
+guidelines. Key standards include:
+
+   * **EditorConfig**: Consistent editor settings across the team
+   * **Markdownlint**: Markdown linting for documentation
+   * **Commitlint**: Conventional commit message format
+   * **Code Style**: 3-space indentation, LF line endings
+
+Run every check:
+
+```bash
+npm run standards
 ```
 
 ## License
