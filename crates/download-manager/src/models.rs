@@ -137,16 +137,18 @@ impl DownloadRecord {
    }
 }
 
+/// Renders the string serde does, so a status reads the same in a log line as in a
+/// payload. `test_display_matches_the_serialized_form` holds the two together.
 impl fmt::Display for DownloadStatus {
    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
       let text = match self {
-         DownloadStatus::Unknown => "Unknown",
-         DownloadStatus::Pending => "Pending",
-         DownloadStatus::Idle => "Idle",
-         DownloadStatus::InProgress => "InProgress",
-         DownloadStatus::Paused => "Paused",
-         DownloadStatus::Canceled => "Canceled",
-         DownloadStatus::Completed => "Completed",
+         DownloadStatus::Unknown => "unknown",
+         DownloadStatus::Pending => "pending",
+         DownloadStatus::Idle => "idle",
+         DownloadStatus::InProgress => "inProgress",
+         DownloadStatus::Paused => "paused",
+         DownloadStatus::Canceled => "canceled",
+         DownloadStatus::Completed => "completed",
       };
       write!(f, "{}", text)
    }
@@ -370,8 +372,43 @@ mod tests {
       assert_eq!(status, DownloadStatus::Unknown);
 
       // Display
-      assert_eq!(format!("{}", DownloadStatus::Unknown), "Unknown");
-      assert_eq!(format!("{}", DownloadStatus::InProgress), "InProgress");
-      assert_eq!(format!("{}", DownloadStatus::Completed), "Completed");
+      assert_eq!(format!("{}", DownloadStatus::Unknown), "unknown");
+      assert_eq!(format!("{}", DownloadStatus::InProgress), "inProgress");
+      assert_eq!(format!("{}", DownloadStatus::Completed), "completed");
+   }
+
+   #[test]
+   fn test_display_matches_the_serialized_form() {
+      // The invariant the `Display` impl exists under: one spelling of a status,
+      // whether it reaches a reader through a log line or through JSON.
+      let statuses = [
+         DownloadStatus::Unknown,
+         DownloadStatus::Pending,
+         DownloadStatus::Idle,
+         DownloadStatus::InProgress,
+         DownloadStatus::Paused,
+         DownloadStatus::Canceled,
+         DownloadStatus::Completed,
+      ];
+
+      for status in statuses {
+         // The arms below make adding a variant a compile error here. Whoever
+         // fixes that error also has to add the new variant to the `statuses`
+         // array above, which these assertions iterate — the compiler cannot
+         // enforce that second step.
+         match &status {
+            DownloadStatus::Unknown
+            | DownloadStatus::Pending
+            | DownloadStatus::Idle
+            | DownloadStatus::InProgress
+            | DownloadStatus::Paused
+            | DownloadStatus::Canceled
+            | DownloadStatus::Completed => {}
+         }
+
+         let serialized = serde_json::to_string(&status).unwrap();
+
+         assert_eq!(format!("\"{}\"", status), serialized);
+      }
    }
 }
