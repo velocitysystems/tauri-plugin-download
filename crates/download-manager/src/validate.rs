@@ -26,6 +26,30 @@ pub fn path(path: &str) -> crate::Result<()> {
    Ok(())
 }
 
+/// Validates a download store directory.
+///
+/// Checks that the directory:
+/// - Is not empty
+/// - Is an absolute path
+///
+/// Structural only, like [`path`]: no existence or writability check. The store creates
+/// its parent on save, and a directory writable now can stop being writable before the
+/// first write — a check here would report a state it cannot promise still holds.
+///
+/// No filename check, unlike [`path`]: every platform appends its own `downloads.json`,
+/// so a root directory is legal.
+pub fn store_dir(dir: &Path) -> crate::Result<()> {
+   if dir.as_os_str().is_empty() {
+      return Err(Error::Path("store directory cannot be empty".to_string()));
+   }
+
+   if !dir.is_absolute() {
+      return Err(Error::Path("store directory must be absolute".to_string()));
+   }
+
+   Ok(())
+}
+
 /// Validates a download URL.
 ///
 /// Checks that the URL:
@@ -109,6 +133,41 @@ mod tests {
    fn test_path_without_filename() {
       // Root path has no filename component.
       assert!(path("/").is_err());
+   }
+
+   #[test]
+   fn test_valid_store_dirs() {
+      assert!(store_dir(Path::new("/var/lib/myapp")).is_ok());
+      assert!(store_dir(Path::new("/downloads")).is_ok());
+   }
+
+   #[test]
+   fn test_empty_store_dir() {
+      let result = store_dir(Path::new(""));
+
+      assert!(result.is_err());
+      assert!(result.unwrap_err().to_string().contains("empty"));
+   }
+
+   #[test]
+   fn test_relative_store_dir() {
+      assert!(store_dir(Path::new("downloads")).is_err());
+      assert!(store_dir(Path::new("./downloads")).is_err());
+      assert!(store_dir(Path::new("../downloads")).is_err());
+   }
+
+   #[test]
+   fn test_root_store_dir_is_accepted() {
+      // Unlike `path`, which requires a filename component: the store appends its own
+      // `downloads.json`, so a directory needs no trailing component to be usable.
+      assert!(store_dir(Path::new("/")).is_ok());
+   }
+
+   #[test]
+   fn test_store_dir_is_not_required_to_exist() {
+      // The store creates its parent when it saves. Naming a directory that does not
+      // exist yet is the normal case on a first run, not a configuration error.
+      assert!(store_dir(Path::new("/nonexistent/directory/for/tests")).is_ok());
    }
 
    #[test]
