@@ -1,6 +1,5 @@
 // Desktop error types
 #[cfg(desktop)]
-#[allow(unused_imports)]
 pub use download_manager::{Error, Result};
 
 // Mobile error types (iOS, Android)
@@ -30,4 +29,4 @@ mod mobile_error {
 }
 
 #[cfg(mobile)]
-pub use mobile_error::Result;
+pub use mobile_error::{Error, Result};

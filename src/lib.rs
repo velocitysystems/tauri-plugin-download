@@ -14,17 +14,35 @@ mod commands;
 mod error;
 mod models;
 
-pub use models::CreateOptions;
+/// The models a Rust caller sees: the return types of the [`DownloadExt::download`]
+/// methods, and, on desktop, the payload of the `tauri-plugin-download:changed` event.
+///
+/// [`DownloadStatus`] is deliberately not `#[non_exhaustive]`: a new variant should
+/// fail a caller's `match` rather than fall into a `_` arm.
+pub use models::{CreateOptions, DownloadActionResponse, DownloadItem, DownloadStatus};
 
-use error::Result;
+/// The error half of every [`DownloadExt::download`] method's return type, so a caller
+/// can name `Result` in their own signatures rather than boxing. The desktop and
+/// mobile `Error` enums have largely different variant sets — only `Io` is shared —
+/// so `Result<T>` and `?`-propagation are portable, but an exhaustive `match` on
+/// `Error` is not and has to be written under `#[cfg(desktop)]`/`#[cfg(mobile)]`.
+pub use error::{Error, Result};
+
+/// The concrete type [`DownloadExt::download`] hands back, so a caller can name it in
+/// a signature or a struct field rather than only call methods on it.
+#[cfg(desktop)]
+pub use download_manager::DownloadManager;
 
 #[cfg(desktop)]
-use download_manager::{DownloadManager, DownloadManagerConfig};
+use download_manager::DownloadManagerConfig;
 
 #[cfg(mobile)]
 mod mobile;
+
+/// The mobile counterpart of [`DownloadManager`]: a handle to the native plugin,
+/// carrying the runtime generic Tauri's mobile bridge requires.
 #[cfg(mobile)]
-use mobile::Download;
+pub use mobile::Download;
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`] to access the download APIs.
 ///
@@ -383,8 +401,6 @@ mod tests {
    #[cfg(desktop)]
    #[test]
    fn test_the_store_is_persisted_in_the_configured_directory() {
-      use download_manager::DownloadItem;
-
       // The feature itself, end to end through the plugin: creating a download has to
       // write `downloads.json` into the configured directory. Asserting on the setter
       // alone would pass even if `build` ignored the value.
@@ -414,7 +430,19 @@ mod tests {
          .unwrap()
          .download;
 
-      assert_eq!(download.status, download_manager::DownloadStatus::Idle);
+      assert_eq!(download.status, DownloadStatus::Idle);
       assert!(expected.exists(), "store not written to {:?}", expected);
+   }
+
+   #[test]
+   fn test_a_changed_event_payload_decodes_into_the_exported_models() {
+      // What issue #42 is about: a Rust caller decodes the event payload into
+      // `DownloadItem` and matches on `DownloadStatus`, instead of comparing the
+      // status against a string whose casing depends on which side produced it.
+      let payload = r#"{"url":"https://example.com/f.mp4","path":"/tmp/f.mp4","options":{"allowMetered":true},"receivedBytes":500,"totalBytes":1000,"progress":50.0,"status":"inProgress"}"#;
+
+      let item: DownloadItem = serde_json::from_str(payload).unwrap();
+
+      assert!(matches!(item.status, DownloadStatus::InProgress));
    }
 }

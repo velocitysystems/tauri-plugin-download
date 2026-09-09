@@ -1,6 +1,6 @@
 // Shared with `download-manager` on every platform rather than mirrored per platform:
 // a second definition of these shapes could drift unnoticed.
-pub use download_manager::{CreateOptions, DownloadActionResponse, DownloadItem};
+pub use download_manager::{CreateOptions, DownloadActionResponse, DownloadItem, DownloadStatus};
 
 /// Wire form of [`CreateOptions`] for the `create` command. TypeScript declares
 /// `allowMetered` optional, so `create(url, {})` must mean "unstated" rather than
