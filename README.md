@@ -467,6 +467,100 @@ execution.
    downloads
 4. **App Resumed**: The plugin reconciles state and emits completion events
 
+### Manifest Declarations
+
+Downloads run in a foreground service, which Android 14 (API 34) requires an app to
+declare. The plugin declares it in its own manifest and the manifest merger folds it
+into the app, so **there is nothing to add to
+`gen/android/app/src/main/AndroidManifest.xml`**. What the merge adds:
+
+| Declaration | Why it is needed |
+| --- | --- |
+| `android.permission.INTERNET` | The transfer itself |
+| `android.permission.FOREGROUND_SERVICE` | `WorkManager` runs each download as a foreground service so it survives the app being backgrounded |
+| `android.permission.FOREGROUND_SERVICE_DATA_SYNC` | The typed permission API 34 requires for a `dataSync` service |
+| `android.permission.POST_NOTIFICATIONS` | The ongoing progress notification a foreground service must show |
+| `<service android:name="androidx.work.impl.foreground.SystemForegroundService" android:foregroundServiceType="dataSync" />` | `WorkManager`'s own service, typed for API 34 |
+
+`WorkManager` adds `WAKE_LOCK`, `ACCESS_NETWORK_STATE` and `RECEIVE_BOOT_COMPLETED`. To
+see what an app ships:
+
+```sh
+cd src-tauri/gen/android && ./gradlew :app:processDebugMainManifest
+cat app/build/intermediates/merged_manifest/*Debug/*/AndroidManifest.xml
+```
+
+#### Notification permission
+
+`POST_NOTIFICATIONS` is a runtime permission on Android 13 (API 33) and later, and the
+plugin does not request it. Downloads run either way; the progress notification appears
+only once the app requests it and the user grants it.
+
+#### Merge conflicts
+
+If the app or another dependency declares `SystemForegroundService` with a different
+`android:foregroundServiceType`, the merge fails. Declare the service in the app manifest
+with every type it needs and let it win:
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync|location"
+            android:exported="false"
+            tools:replace="android:foregroundServiceType" />
+    </application>
+</manifest>
+```
+
+The list must still include `dataSync`, and each type needs its matching
+`FOREGROUND_SERVICE_*` permission.
+
+#### Opting out of the foreground service
+
+To ship without the foreground service permissions — and without the Play declaration
+below — remove them in the app manifest, which needs
+`xmlns:tools="http://schemas.android.com/tools"` on its `<manifest>` element:
+
+```xml
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE"
+    tools:node="remove" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+    tools:node="remove" />
+```
+
+Downloads still run: the worker logs the failed promotion and continues as ordinary
+background work. Expect the system to stop it soon after the app leaves the foreground,
+and `WorkManager` to resume it later.
+
+### Google Play Console
+
+An app that ships `FOREGROUND_SERVICE_DATA_SYNC` and targets API 34 or later must
+[declare that use][play-fgs] before it can roll out. In Play Console: **Monitor and
+improve → App content → Foreground service permissions**.
+
+   1. Select the **Data sync** type — the one this plugin uses
+   2. Describe the feature: user-started file downloads that keep transferring while the
+      app is backgrounded
+   3. Say what happens if the system defers or interrupts the download — a required part
+      of the declaration, not the same question as step 2
+   4. Link a video showing the download continuing, not just the download UI
+   5. Submit — it is reviewed, and an incomplete declaration blocks a rollout
+
+[play-fgs]: https://support.google.com/googleplay/android-developer/answer/13392821
+
+The declaration belongs to the app rather than to a release, so revisit it only when the
+set of foreground service types changes.
+
+**Note**: an app _targeting_ API 35 or higher gets [a six-hour cap][fgs-timeout] on
+`dataSync` foreground service runtime per 24 hours — it follows the target SDK, not the
+device, so targeting 34 avoids it on an Android 15 phone. Bringing the app to the
+foreground resets the budget; long transfers are resumed rather than run in one stretch.
+
+[fgs-timeout]: https://developer.android.com/about/versions/15/behavior-changes-15
+
 ### Project Structure
 
 The `android/` directory is a 3-module Gradle build:
