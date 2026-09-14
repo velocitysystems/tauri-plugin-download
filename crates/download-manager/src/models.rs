@@ -37,7 +37,10 @@ pub(crate) struct DownloadRecord {
 
 /// Public payload sent to the frontend. Built from a [`DownloadRecord`] with
 /// `progress` computed from `received_bytes` / `total_bytes`.
-#[derive(Debug, Clone, Default, Serialize)]
+///
+/// `Deserialize` must stay: on mobile, this is what a native command response
+/// decodes into, in addition to a change event payload on desktop.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadItem {
    pub url: String,
@@ -50,7 +53,7 @@ pub struct DownloadItem {
    pub status: DownloadStatus,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DownloadStatus {
    /// Status could not be determined.
@@ -70,7 +73,7 @@ pub enum DownloadStatus {
    Completed,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadActionResponse {
    pub download: DownloadItem,
@@ -134,16 +137,18 @@ impl DownloadRecord {
    }
 }
 
+/// Renders the string serde does, so a status reads the same in a log line as in a
+/// payload. `test_display_matches_the_serialized_form` holds the two together.
 impl fmt::Display for DownloadStatus {
    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
       let text = match self {
-         DownloadStatus::Unknown => "Unknown",
-         DownloadStatus::Pending => "Pending",
-         DownloadStatus::Idle => "Idle",
-         DownloadStatus::InProgress => "InProgress",
-         DownloadStatus::Paused => "Paused",
-         DownloadStatus::Canceled => "Canceled",
-         DownloadStatus::Completed => "Completed",
+         DownloadStatus::Unknown => "unknown",
+         DownloadStatus::Pending => "pending",
+         DownloadStatus::Idle => "idle",
+         DownloadStatus::InProgress => "inProgress",
+         DownloadStatus::Paused => "paused",
+         DownloadStatus::Canceled => "canceled",
+         DownloadStatus::Completed => "completed",
       };
       write!(f, "{}", text)
    }
@@ -278,6 +283,44 @@ mod tests {
    }
 
    #[test]
+   fn test_download_item_round_trip() {
+      // The shape a Rust consumer decodes a `tauri-plugin-download:changed` payload
+      // into. Asserting through the JSON keeps the camelCase field names — what the
+      // frontend, both natives and the event payload all use — under test.
+      let item = sample_record().with_bytes(500, Some(1000)).to_item();
+
+      let json = serde_json::to_string(&item).unwrap();
+      assert!(json.contains(r#""receivedBytes":500"#));
+      assert!(json.contains(r#""totalBytes":1000"#));
+
+      let decoded: DownloadItem = serde_json::from_str(&json).unwrap();
+      assert_eq!(decoded.url, item.url);
+      assert_eq!(decoded.path, item.path);
+      assert_eq!(decoded.options, item.options);
+      assert_eq!(decoded.received_bytes, 500);
+      assert_eq!(decoded.total_bytes, Some(1000));
+      assert_eq!(decoded.progress, 50.0);
+      assert_eq!(decoded.status, DownloadStatus::Idle);
+   }
+
+   #[test]
+   fn test_download_action_response_round_trip() {
+      // The mobile bridge decodes every command response into this type, so it has
+      // to survive the trip with the same camelCase keys the natives emit.
+      let item = sample_record().to_item();
+      let response = DownloadActionResponse::with_expected_status(item, DownloadStatus::InProgress);
+
+      let json = serde_json::to_string(&response).unwrap();
+      assert!(json.contains(r#""expectedStatus":"inProgress""#));
+      assert!(json.contains(r#""isExpectedStatus":false"#));
+
+      let decoded: DownloadActionResponse = serde_json::from_str(&json).unwrap();
+      assert_eq!(decoded.expected_status, DownloadStatus::InProgress);
+      assert!(!decoded.is_expected_status);
+      assert_eq!(decoded.download.status, DownloadStatus::Idle);
+   }
+
+   #[test]
    fn test_create_options_default_allows_metered_connections() {
       assert!(CreateOptions::default().allow_metered);
    }
@@ -329,8 +372,43 @@ mod tests {
       assert_eq!(status, DownloadStatus::Unknown);
 
       // Display
-      assert_eq!(format!("{}", DownloadStatus::Unknown), "Unknown");
-      assert_eq!(format!("{}", DownloadStatus::InProgress), "InProgress");
-      assert_eq!(format!("{}", DownloadStatus::Completed), "Completed");
+      assert_eq!(format!("{}", DownloadStatus::Unknown), "unknown");
+      assert_eq!(format!("{}", DownloadStatus::InProgress), "inProgress");
+      assert_eq!(format!("{}", DownloadStatus::Completed), "completed");
+   }
+
+   #[test]
+   fn test_display_matches_the_serialized_form() {
+      // The invariant the `Display` impl exists under: one spelling of a status,
+      // whether it reaches a reader through a log line or through JSON.
+      let statuses = [
+         DownloadStatus::Unknown,
+         DownloadStatus::Pending,
+         DownloadStatus::Idle,
+         DownloadStatus::InProgress,
+         DownloadStatus::Paused,
+         DownloadStatus::Canceled,
+         DownloadStatus::Completed,
+      ];
+
+      for status in statuses {
+         // The arms below make adding a variant a compile error here. Whoever
+         // fixes that error also has to add the new variant to the `statuses`
+         // array above, which these assertions iterate — the compiler cannot
+         // enforce that second step.
+         match &status {
+            DownloadStatus::Unknown
+            | DownloadStatus::Pending
+            | DownloadStatus::Idle
+            | DownloadStatus::InProgress
+            | DownloadStatus::Paused
+            | DownloadStatus::Canceled
+            | DownloadStatus::Completed => {}
+         }
+
+         let serialized = serde_json::to_string(&status).unwrap();
+
+         assert_eq!(format!("\"{}\"", status), serialized);
+      }
    }
 }
