@@ -7,6 +7,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.junit.Test
 import java.io.File
 
@@ -115,10 +118,87 @@ class DownloadStoreTest {
    // -- Round trip --
 
    @Test
-   fun `encoded records decode back unchanged`() {
-      val records = listOf(sampleRecord("a.mp4", 10L), sampleRecord("b.mp4", 20L))
+   fun `rejects legacy arrays and malformed envelopes`() {
+      for (text in listOf(
+         "[]", "[1, []]", "[{}]", "null", "true", "1", "{}",
+         """{"version":1}""",
+         """{"downloads":[]}""",
+         """{"version":1,"downloads":null}""",
+         """{"version":1,"downloads":{}}""",
+         """{"version":1,"downloads":"private input"}""",
+      )) {
+         val error = assertThrows(SerializationException::class.java) {
+            DownloadStore.decodeRecords(text)
+         }
+         assertEquals(text, "Malformed store envelope", error.message)
+      }
+   }
 
-      val decoded = DownloadStore.decodeRecords(DownloadStore.encodeRecords(records))
+   @Test
+   fun `rejects invalid version types and values`() {
+      for (version in listOf("\"1\"", "true", "false", "null", "-1", "1.5", "[]", "{}")) {
+         val error = assertThrows(SerializationException::class.java) {
+            DownloadStore.decodeRecords("""{"version":$version,"downloads":[]}""")
+         }
+         assertEquals(version, "Malformed store envelope", error.message)
+      }
+   }
+
+   @Test
+   fun `unsupported versions are checked before record decoding`() {
+      for (version in listOf(0L, 2L, 4294967295L)) {
+         val error = assertThrows(SerializationException::class.java) {
+            DownloadStore.decodeRecords("""{"version":$version,"downloads":[{"future":"record"}]}""")
+         }
+         assertEquals("Unsupported store version: $version (expected 1)", error.message)
+      }
+   }
+
+   @Test
+   fun `unknown envelope fields are ignored`() {
+      val decoded = DownloadStore.decodeRecords(
+         """{"version":1,"downloads":[],"somethingNew":{"ignored":true}}"""
+      )
+      assertTrue(decoded.isEmpty())
+   }
+
+   @Test
+   fun `decoder errors do not expose private input`() {
+      val error = assertThrows(SerializationException::class.java) {
+         DownloadStore.decodeRecords(
+            """{"version":1,"downloads":[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":7,"status":"private input"}]}"""
+         )
+      }
+      assertEquals("Invalid store records", error.message)
+      assertNull(error.cause)
+
+      val malformed = assertThrows(SerializationException::class.java) {
+         DownloadStore.decodeRecords("private input")
+      }
+      assertEquals("Malformed store envelope", malformed.message)
+      assertNull(malformed.cause)
+   }
+
+   @Test
+   fun `writes both envelope fields even for an empty store`() {
+      val encoded = DownloadStore.encodeRecords(emptyList())
+      assertEquals(
+         Json.parseToJsonElement("""{"version":1,"downloads":[]}"""),
+         Json.parseToJsonElement(encoded),
+      )
+      assertTrue(DownloadStore.decodeRecords(encoded).isEmpty())
+   }
+
+   @Test
+   fun `encoded records decode back unchanged`() {
+      val records = listOf(
+         sampleRecord("a.mp4", 10L).copy(options = CreateOptions(allowMetered = false)),
+         sampleRecord("b.mp4", 20L),
+      )
+
+      val encoded = DownloadStore.encodeRecords(records)
+      assertEquals(JsonPrimitive(1), Json.parseToJsonElement(encoded).jsonObject["version"])
+      val decoded = DownloadStore.decodeRecords(encoded)
 
       assertEquals(records, decoded)
    }
