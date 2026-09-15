@@ -15,6 +15,11 @@ android {
         consumerProguardFiles("consumer-rules.pro")
     }
 
+    testOptions {
+        // Exercise the same target API behavior as the Android example app.
+        targetSdk = 35
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
