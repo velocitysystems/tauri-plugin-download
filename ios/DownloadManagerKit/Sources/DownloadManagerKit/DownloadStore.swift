@@ -6,7 +6,62 @@
 import Foundation
 import os.log
 
-/// Thread-safe store for the download records array, persisted to an atomically
+private let currentSchemaVersion: UInt32 = 1
+
+private enum StoreDecodingError: LocalizedError {
+   case malformedEnvelope
+   case unsupportedVersion(UInt32)
+   case invalidRecords
+
+   var errorDescription: String? {
+      switch self {
+      case .malformedEnvelope:
+         return "Malformed store envelope"
+      case .unsupportedVersion(let version):
+         return "Unsupported store version: \(version) (expected \(currentSchemaVersion))"
+      case .invalidRecords:
+         return "Invalid store records"
+      }
+   }
+}
+
+/// The current record type remains the v1 payload until a real migration is needed.
+private struct StoreDocument: Codable {
+   let version: UInt32
+   let downloads: [DownloadRecord]
+
+   private enum CodingKeys: String, CodingKey {
+      case version, downloads
+   }
+
+   init(downloads: [DownloadRecord]) {
+      self.version = currentSchemaVersion
+      self.downloads = downloads
+   }
+
+   init(from decoder: Decoder) throws {
+      let container: KeyedDecodingContainer<CodingKeys>
+      do {
+         container = try decoder.container(keyedBy: CodingKeys.self)
+         version = try container.decode(UInt32.self, forKey: .version)
+         // Check the array shape without decoding records from a future schema.
+         _ = try container.nestedUnkeyedContainer(forKey: .downloads)
+      } catch {
+         throw StoreDecodingError.malformedEnvelope
+      }
+
+      guard version == currentSchemaVersion else {
+         throw StoreDecodingError.unsupportedVersion(version)
+      }
+      do {
+         downloads = try container.decode([DownloadRecord].self, forKey: .downloads)
+      } catch {
+         throw StoreDecodingError.invalidRecords
+      }
+   }
+}
+
+/// Thread-safe store for versioned download records, persisted to an atomically
 /// written JSON file.
 actor DownloadStore {
    private var downloads: [DownloadRecord]
@@ -110,22 +165,35 @@ actor DownloadStore {
    
    /// Decodes the persisted store.
    ///
-   /// Note that one malformed element fails the whole array, discarding every other
-   /// download in the file. Making that per-record is tracked in #64.
+   /// Rejects the whole document if any record is malformed. Preserving an
+   /// unreadable file before continuing empty is tracked separately in #64.
    static func load(from savePath: URL) -> [DownloadRecord] {
       do {
          let data = try Data(contentsOf: savePath)
-         return try JSONDecoder().decode([DownloadRecord].self, from: data)
+         return try decodeRecords(from: data)
       } catch {
          os_log(.error, log: Log.downloadStore, "Failed to load download store: %{public}@", error.localizedDescription)
          return []
       }
    }
 
+   /// Separate decoding from the existing log-and-continue load path so tests can
+   /// distinguish invalid envelopes, unsupported versions, and invalid records.
+   static func decodeRecords(from data: Data) throws -> [DownloadRecord] {
+      do {
+         return try JSONDecoder().decode(StoreDocument.self, from: data).downloads
+      } catch let error as StoreDecodingError {
+         throw error
+      } catch {
+         // Raw decoder errors can expose document contents in the store logger.
+         throw StoreDecodingError.malformedEnvelope
+      }
+   }
+
    private func save() {
       let encoder = JSONEncoder()
       do {
-         let data = try encoder.encode(downloads)
+         let data = try encoder.encode(StoreDocument(downloads: downloads))
 
          // `write` does not create intermediate directories. `StoreLocation.set` already
          // created a configured directory, and is where an unusable one fails loudly;

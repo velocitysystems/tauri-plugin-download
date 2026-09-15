@@ -639,7 +639,7 @@ func application(_ application: UIApplication,
 
 ## Download Store Schema
 
-Desktop and Android persist `downloads.json` with this envelope:
+Desktop, Android, and iOS persist `downloads.json` with this envelope:
 
 ```json
 {
@@ -665,6 +665,11 @@ configured, clean up that directory rather than assuming the platform default.
 There is no migration from the old array format. Future schema changes will add
 migrations and version-specific record types when needed.
 
+On iOS, the default store directory is Application Support. Older development
+builds used Documents; files there are not imported automatically. Clean up the
+effective directory used by the build being tested. iOS records retain their
+optional `resumeDataPath`; the schema change does not move resume data.
+
 ### Store Tests
 
 ```bash
@@ -677,6 +682,15 @@ cd android
 The last command requires a connected Android device or emulator. It exercises
 the real `AtomicFile`, directory creation, backup recovery, and loading rejected
 documents. Kotlin JVM tests cover schema validation and record round trips.
+
+On macOS, run the Swift package tests (also run by the macOS CI job):
+
+```bash
+swift test --package-path ios/DownloadManagerKit
+```
+
+These cover the native store and schema, including iOS resume-data fields. They
+do not replace testing the full plugin on an iOS simulator or device.
 
 ## Development Standards
 

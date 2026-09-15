@@ -40,7 +40,7 @@ final class DownloadStoreTests: XCTestCase {
 
    func testLoadsPersistedRecords() {
       write("""
-      [{"url":"http://example.com/a.mp4","path":"file:///tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":500,"totalBytes":1000,"status":"paused"}]
+      {"version":1,"downloads":[{"url":"http://example.com/a.mp4","path":"file:///tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":500,"totalBytes":1000,"status":"paused"}]}
       """)
 
       let records = DownloadStore.load(from: savePath)
@@ -58,13 +58,12 @@ final class DownloadStoreTests: XCTestCase {
    }
 
    func testOneUnreadableRecordDiscardsTheWholeStore() {
-      // Pins today's behaviour, which is not the behaviour we want: the array is
-      // decoded in one call, so the middle element takes both good records with it.
-      // Invert this test when per-record decoding lands (#64).
+      // Records are accepted as a whole; #64 will preserve unreadable files,
+      // rather than salvage individual records.
       write("""
-      [{"url":"http://example.com/a.mp4","path":"file:///tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":1,"status":"paused"},
+      {"version":1,"downloads":[{"url":"http://example.com/a.mp4","path":"file:///tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":1,"status":"paused"},
        {"url":"http://example.com/b.mp4","status":"paused"},
-       {"url":"http://example.com/c.mp4","path":"file:///tmp/c.mp4","options":{"allowMetered":true},"receivedBytes":3,"status":"idle"}]
+       {"url":"http://example.com/c.mp4","path":"file:///tmp/c.mp4","options":{"allowMetered":true},"receivedBytes":3,"status":"idle"}]}
       """)
 
       XCTAssertEqual(DownloadStore.load(from: savePath).count, 0)
@@ -78,7 +77,7 @@ final class DownloadStoreTests: XCTestCase {
 
    func testUnknownKeysAreIgnored() {
       write("""
-      [{"url":"http://example.com/a.mp4","path":"file:///tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":7,"status":"idle","somethingNew":42}]
+      {"version":1,"downloads":[{"url":"http://example.com/a.mp4","path":"file:///tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":7,"status":"idle","somethingNew":42}]}
       """)
 
       XCTAssertEqual(DownloadStore.load(from: savePath).first?.receivedBytes, 7)
