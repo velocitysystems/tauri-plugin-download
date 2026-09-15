@@ -2,9 +2,20 @@ package org.silvermine.downloadmanager
 
 import android.util.AtomicFile
 import android.util.Log
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.longOrNull
 import java.io.File
+
+/** The envelope fields have no defaults so both are always required and written. */
+@Serializable
+private data class StoreDocument(val version: Int, val downloads: List<DownloadRecord>)
 
 /**
  * Thread-safe store for download records backed by an atomic JSON file.
@@ -103,6 +114,7 @@ internal class DownloadStore(directory: File) {
    companion object {
       private const val TAG = "DownloadStore"
       private const val STORE_FILENAME = "downloads.json"
+      private const val CURRENT_SCHEMA_VERSION = 1
 
       /**
        * Resolves the store file inside a directory.
@@ -117,8 +129,8 @@ internal class DownloadStore(directory: File) {
       /**
        * Decodes persisted records.
        *
-       * Note that one malformed element fails the whole array, discarding every
-       * other download in the file. Making that per-record is tracked in #64.
+       * Rejects the whole document if any record is malformed. Preserving an
+       * unreadable file before continuing empty is tracked separately in #64.
        *
        * Extracted from [load] so it can be unit-tested, and deliberately free of
        * logging to keep it so: `android.util.Log` is a throwing stub off-device.
@@ -126,7 +138,31 @@ internal class DownloadStore(directory: File) {
        * @param text The persisted store's contents.
        * @return The decoded records.
        */
-      internal fun decodeRecords(text: String): List<DownloadRecord> = json.decodeFromString(text)
+      internal fun decodeRecords(text: String): List<DownloadRecord> {
+         val root = try {
+            json.parseToJsonElement(text)
+         } catch (_: SerializationException) {
+            // Decoder messages can contain private values from the input.
+            throw SerializationException("Malformed store envelope")
+         }
+         val document = root as? JsonObject
+            ?: throw SerializationException("Malformed store envelope")
+         val versionField = document["version"] as? JsonPrimitive
+         val version = versionField?.takeUnless { it.isString }?.longOrNull
+         val records = document["downloads"] as? JsonArray
+         if (version == null || version < 0 || records == null) {
+            throw SerializationException("Malformed store envelope")
+         }
+         if (version != CURRENT_SCHEMA_VERSION.toLong()) {
+            throw SerializationException("Unsupported store version: $version (expected $CURRENT_SCHEMA_VERSION)")
+         }
+
+         return try {
+            json.decodeFromJsonElement<List<DownloadRecord>>(records)
+         } catch (_: SerializationException) {
+            throw SerializationException("Invalid store records")
+         }
+      }
 
       /**
        * Encodes records for persistence.
@@ -134,6 +170,7 @@ internal class DownloadStore(directory: File) {
        * @param records The records to encode.
        * @return The JSON text to persist.
        */
-      internal fun encodeRecords(records: List<DownloadRecord>): String = json.encodeToString(records)
+      internal fun encodeRecords(records: List<DownloadRecord>): String =
+         json.encodeToString(StoreDocument(CURRENT_SCHEMA_VERSION, records))
    }
 }

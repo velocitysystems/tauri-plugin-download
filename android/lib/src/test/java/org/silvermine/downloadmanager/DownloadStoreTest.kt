@@ -33,7 +33,7 @@ class DownloadStoreTest {
    @Test
    fun `decodes persisted records`() {
       val decoded = DownloadStore.decodeRecords(
-         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":500,"totalBytes":1000,"status":"paused"}]"""
+         """{"version":1,"downloads":[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":500,"totalBytes":1000,"status":"paused"}]}"""
       )
 
       assertEquals(1, decoded.size)
@@ -44,19 +44,14 @@ class DownloadStoreTest {
 
    @Test
    fun `one unreadable record discards the whole store`() {
-      // Pins today's behaviour, which is not the behaviour we want: the array is
-      // decoded in one call, so the middle element takes both good records with it
-      // and load() falls back to an empty store. Invert this test when per-record
-      // decoding lands (#64).
-      //
-      // Scoped to the decode call so the inverted test fails for a known reason.
-      // Type only: the message wording is kotlinx's, not a contract.
+      // Records are accepted as a whole; #64 will preserve unreadable files,
+      // rather than salvage individual records.
       assertThrows(SerializationException::class.java) {
          DownloadStore.decodeRecords(
             """
-            [{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":1,"status":"paused"},
+            {"version":1,"downloads":[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":1,"status":"paused"},
              {"url":"http://example.com/b.mp4","status":"paused"},
-             {"url":"http://example.com/c.mp4","path":"/tmp/c.mp4","options":{"allowMetered":true},"receivedBytes":3,"status":"idle"}]
+             {"url":"http://example.com/c.mp4","path":"/tmp/c.mp4","options":{"allowMetered":true},"receivedBytes":3,"status":"idle"}]}
             """.trimIndent()
          )
       }
@@ -65,7 +60,7 @@ class DownloadStoreTest {
    @Test
    fun `a record of the wrong shape fails the decode`() {
       assertThrows(SerializationException::class.java) {
-         DownloadStore.decodeRecords("""["not an object"]""")
+         DownloadStore.decodeRecords("""{"version":1,"downloads":["not an object"]}""")
       }
    }
 
@@ -74,7 +69,7 @@ class DownloadStoreTest {
       // The store's Json is configured with ignoreUnknownKeys, so a field added by
       // a later version does not cost the record.
       val decoded = DownloadStore.decodeRecords(
-         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":7,"status":"idle","somethingNew":42}]"""
+         """{"version":1,"downloads":[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":7,"status":"idle","somethingNew":42}]}"""
       )
 
       assertEquals(7L, decoded.first().receivedBytes)
@@ -85,7 +80,7 @@ class DownloadStoreTest {
       // Matches the Rust and Swift records: everything but totalBytes is stated.
       assertThrows(SerializationException::class.java) {
          DownloadStore.decodeRecords(
-            """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"status":"idle"}]"""
+            """{"version":1,"downloads":[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"status":"idle"}]}"""
          )
       }
    }
@@ -95,7 +90,7 @@ class DownloadStoreTest {
       // totalBytes stays optional on all three platforms: absent means the server
       // reported no content length.
       val decoded = DownloadStore.decodeRecords(
-         """[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":7,"status":"idle"}]"""
+         """{"version":1,"downloads":[{"url":"http://example.com/a.mp4","path":"/tmp/a.mp4","options":{"allowMetered":true},"receivedBytes":7,"status":"idle"}]}"""
       )
 
       assertEquals(7L, decoded.first().receivedBytes)
@@ -103,14 +98,14 @@ class DownloadStoreTest {
    }
 
    @Test
-   fun `an empty array decodes to nothing`() {
-      val decoded = DownloadStore.decodeRecords("[]")
+   fun `an empty v1 store decodes to nothing`() {
+      val decoded = DownloadStore.decodeRecords("""{"version":1,"downloads":[]}""")
 
       assertEquals(0, decoded.size)
    }
 
    @Test
-   fun `text that is not a json array is rejected`() {
+   fun `text that is not a store envelope is rejected`() {
       // load() catches these and leaves the store empty rather than half-built.
       for (text in listOf("this is not json", """{"url":"http://example.com/a.mp4"}""", "")) {
          assertThrows(SerializationException::class.java) { DownloadStore.decodeRecords(text) }
