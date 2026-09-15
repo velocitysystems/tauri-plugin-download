@@ -1,0 +1,89 @@
+package org.silvermine.downloadmanager
+
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.util.UUID
+
+/** Exercises the real AtomicFile and store initialization, which JVM tests cannot. */
+@RunWith(AndroidJUnit4::class)
+class DownloadStoreInstrumentedTest {
+   private lateinit var directory: File
+
+   @Before
+   fun setUp() {
+      val context = InstrumentationRegistry.getInstrumentation().targetContext
+      directory = File(context.filesDir, "store-schema-test-${UUID.randomUUID()}")
+   }
+
+   @After
+   fun tearDown() {
+      directory.deleteRecursively()
+   }
+
+   private fun sampleRecord() = DownloadRecord(
+      url = "https://example.com/file.mp4",
+      path = "/tmp/file.mp4",
+      options = CreateOptions(allowMetered = false),
+      receivedBytes = 123,
+      totalBytes = 456,
+      status = DownloadStatus.Paused,
+   )
+
+   @Test
+   fun firstWriteCreatesConfiguredDirectoryAndReloadsV1() {
+      val nested = File(directory, "nested/store")
+      val store = DownloadStore(nested)
+      assertTrue(store.list().isEmpty())
+      assertFalse(DownloadStore.storeFile(nested).exists())
+
+      val record = sampleRecord()
+      store.append(record)
+      assertEquals(listOf(record), DownloadStore(nested).list())
+      assertEquals(
+         DownloadStore.encodeRecords(listOf(record)),
+         DownloadStore.storeFile(nested).readText(),
+      )
+
+      store.remove(record)
+      assertEquals("{\"version\":1,\"downloads\":[]}", DownloadStore.storeFile(nested).readText())
+      assertTrue(DownloadStore(nested).list().isEmpty())
+   }
+
+   @Test
+   fun rejectedDocumentsStayUntouchedUntilALaterSave() {
+      assertTrue(directory.mkdirs())
+      val file = DownloadStore.storeFile(directory)
+      for (text in listOf("[]", "not json", """{"version":2,"downloads":[]}""")) {
+         file.writeText(text)
+         val store = DownloadStore(directory)
+         assertTrue(store.list().isEmpty())
+         assertEquals(text, file.readText())
+
+         // This existing overwrite behavior is deliberately left to issue #64.
+         store.append(sampleRecord())
+         assertEquals(listOf(sampleRecord()), DownloadStore(directory).list())
+      }
+   }
+
+   @Test
+   fun atomicFileRecoversVersionedBackupBeforeDecoding() {
+      assertTrue(directory.mkdirs())
+      val file = DownloadStore.storeFile(directory)
+      val backup = File(file.path + ".bak")
+      val records = listOf(sampleRecord())
+      backup.writeText(DownloadStore.encodeRecords(records))
+      file.writeText("interrupted replacement")
+
+      assertEquals(records, DownloadStore(directory).list())
+      assertFalse(backup.exists())
+      assertEquals(DownloadStore.encodeRecords(records), file.readText())
+   }
+}
