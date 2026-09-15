@@ -3,10 +3,41 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
 use crate::Error;
 use crate::models::{DownloadRecord, DownloadStatus};
+
+const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+/// Private on-disk format. Record types and migrations are introduced only when
+/// a future schema needs them; v1 uses the current persisted record unchanged.
+#[derive(Serialize, Deserialize)]
+struct StoreDocument<T> {
+   version: u32,
+   downloads: Vec<T>,
+}
+
+fn decode_store(data: &[u8]) -> crate::Result<Vec<DownloadRecord>> {
+   // Require an object explicitly: serde can also deserialize structs from arrays.
+   let fields: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(data)
+      .map_err(|_| Error::Store("Malformed store envelope".to_string()))?;
+   let document: StoreDocument<serde_json::Value> =
+      serde_json::from_value(serde_json::Value::Object(fields))
+         .map_err(|_| Error::Store("Malformed store envelope".to_string()))?;
+
+   if document.version != CURRENT_SCHEMA_VERSION {
+      return Err(Error::Store(format!(
+         "Unsupported store version: {} (expected {})",
+         document.version, CURRENT_SCHEMA_VERSION
+      )));
+   }
+
+   // Keep decoder details out of logs: they can contain URLs and other input values.
+   serde_json::from_value(serde_json::Value::Array(document.downloads))
+      .map_err(|_| Error::Store("Invalid store records".to_string()))
+}
 
 pub(crate) enum UpdateIfStatusResult {
    Updated(DownloadRecord),
@@ -270,8 +301,7 @@ impl DownloadStore {
 
       let data =
          fs::read(&inner.path).map_err(|e| Error::Store(format!("Failed to read store: {}", e)))?;
-      inner.downloads = serde_json::from_slice(&data)
-         .map_err(|e| Error::Store(format!("Failed to parse store: {}", e)))?;
+      inner.downloads = decode_store(&data)?;
 
       Ok(())
    }
@@ -297,7 +327,11 @@ fn save_inner(inner: &StoreInner) -> crate::Result<()> {
       .map_err(|e| Error::Store(format!("Failed to create store directory: {}", e)))?;
 
    // Serialize before touching the disk so a failure here cannot leave a temp file behind.
-   let data = serde_json::to_vec(&inner.downloads)
+   let document = StoreDocument {
+      version: CURRENT_SCHEMA_VERSION,
+      downloads: inner.downloads.iter().collect(),
+   };
+   let data = serde_json::to_vec(&document)
       .map_err(|e| Error::Store(format!("Failed to serialize store: {}", e)))?;
 
    // The temp file has to be a sibling of the store: `rename` cannot cross a mount point.
@@ -810,7 +844,8 @@ mod tests {
       let dir = TempDir::new().unwrap();
       let path = dir.path().join("downloads.json");
       let items = vec![sample_record("/tmp/file.mp4")];
-      fs::write(&path, serde_json::to_vec(&items).unwrap()).unwrap();
+      let document = serde_json::json!({ "version": 1, "downloads": items });
+      fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
 
       let store = DownloadStore::new(path);
       store.load().unwrap();
