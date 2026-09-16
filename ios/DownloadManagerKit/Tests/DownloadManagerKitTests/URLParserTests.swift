@@ -60,4 +60,32 @@ final class URLParserTests: XCTestCase {
       XCTAssertThrowsError(try parseURL("not a valid url"))
    }
 
+   // MARK: - Messages
+
+   func testPathMessagesMatchOtherPlatforms() {
+      // Rust and Android send these exact strings for the same inputs.
+      XCTAssertEqual(message { try parsePath("") }, "Path Error: path cannot be empty")
+      XCTAssertEqual(message { try parsePath("file.txt") }, "Path Error: path must be absolute")
+      XCTAssertEqual(message { try parsePath("/") }, "Path Error: path must have a filename")
+   }
+
+   func testURLMessagesMatchOtherPlatforms() {
+      XCTAssertEqual(message { try parseURL("") }, "URL Error: URL cannot be empty")
+      XCTAssertEqual(message { try parseURL("not a valid url") }, "URL Error: Invalid URL: not a valid url")
+      XCTAssertEqual(message { try parseURL("example.com/file.mp4") }, "URL Error: Invalid URL: example.com/file.mp4")
+      XCTAssertEqual(
+         message { try parseURL("ftp://example.com/file.mp4") },
+         "URL Error: Invalid URL scheme 'ftp': must be http or https"
+      )
+   }
+
+   /// The message the plugin rejects with: `localizedDescription` of the thrown error.
+   private func message(_ body: () throws -> Any) -> String? {
+      do {
+         _ = try body()
+         return nil
+      } catch {
+         return error.localizedDescription
+      }
+   }
 }
