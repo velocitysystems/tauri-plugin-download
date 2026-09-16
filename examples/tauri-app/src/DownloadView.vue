@@ -87,7 +87,7 @@ async function listenToEvents(): Promise<void> {
    });
 }
 
-function onError(error: Error): void {
+function onError(error: unknown): void {
    console.error(error);
 }
 
@@ -153,16 +153,18 @@ async function doCreate(): Promise<void> {
       return;
    }
 
-   const result = await currentDownload.value.create(props.url, {
-      allowMetered: props.allowMetered ?? true,
-   });
+   try {
+      const result = await currentDownload.value.create(props.url, {
+         allowMetered: props.allowMetered ?? true,
+      });
 
-   currentDownload.value = result.download;
+      currentDownload.value = result.download;
 
-   if (result.error) {
-      onError(result.error);
-   } else if (!result.isExpectedStatus) {
-      handleUnexpectedStatus(DownloadAction.Create, result);
+      if (!result.isExpectedStatus) {
+         handleUnexpectedStatus(DownloadAction.Create, result);
+      }
+   } catch(error) {
+      onError(error);
    }
 }
 
@@ -172,14 +174,16 @@ async function doAction<A extends NoArgAction>(action: A): Promise<void> {
       return;
    }
 
-   const result = await currentDownload.value[action]();
+   try {
+      const result = await currentDownload.value[action]();
 
-   currentDownload.value = result.download;
+      currentDownload.value = result.download;
 
-   if (result.error) {
-      onError(result.error);
-   } else if (!result.isExpectedStatus) {
-      handleUnexpectedStatus(action, result);
+      if (!result.isExpectedStatus) {
+         handleUnexpectedStatus(action, result);
+      }
+   } catch(error) {
+      onError(error);
    }
 }
 </script>
