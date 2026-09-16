@@ -55,8 +55,7 @@ export interface MockDownloadPluginController {
     *
     * @param download - The download state to store and broadcast.
     * @returns A promise that resolves after the change event is emitted.
-    * @throws If the status is `Pending` or `Unknown`, which the native platforms never
-    * emit.
+    * @throws If the status is `Pending`, which the native platforms never emit.
     */
    emitChange(download: DownloadState<DownloadStatus>): Promise<void>;
 

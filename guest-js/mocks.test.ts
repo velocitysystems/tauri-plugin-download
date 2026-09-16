@@ -45,12 +45,6 @@ const UNSTORED_STATUSES = [
    DownloadStatus.Pending,
    DownloadStatus.Canceled,
    DownloadStatus.Completed,
-   DownloadStatus.Unknown,
-] as const;
-
-const NEVER_EMITTED_STATUSES = [
-   DownloadStatus.Pending,
-   DownloadStatus.Unknown,
 ] as const;
 
 const ACTION_STATUS_CASES = ACTIONS.flatMap((action) => {
@@ -355,10 +349,10 @@ describe('mockDownloadPlugin', () => {
       expect(controller.listDownloads()).toEqual([]);
    });
 
-   it.each(NEVER_EMITTED_STATUSES)('rejects emitting a %s change', async (status) => {
+   it('rejects emitting a pending change', async () => {
       const controller = mockDownloadPlugin();
 
-      const download = createMockDownloadState(status, { path: '/tmp/emitted.zip' });
+      const download = createMockDownloadState(DownloadStatus.Pending, { path: '/tmp/emitted.zip' });
 
       await expect(controller.emitChange(download)).rejects.toThrow('native stores only hold');
    });

@@ -8,10 +8,6 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 enum class DownloadStatus {
-   /** Status could not be determined. */
-   @SerialName("unknown")
-   Unknown,
-
    /** Download has been created and is ready to start. */
    @SerialName("idle")
    Idle,

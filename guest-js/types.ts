@@ -17,9 +17,6 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
  */
 export enum DownloadStatus {
 
-   /** Status could not be determined. */
-   Unknown = 'unknown',
-
    /**
     * Download has not yet been created/persisted. Exists only in this SDK: the native
     * layers return `null` for a path with no stored download, and `get()` maps it here.
@@ -165,9 +162,6 @@ export const allowedActions = {
    ],
    [DownloadStatus.Completed]: [],
    [DownloadStatus.Canceled]: [],
-   [DownloadStatus.Unknown]: [
-      DownloadAction.Listen,
-   ],
 } as const satisfies Record<DownloadStatus, DownloadAction[] | []>;
 
 export const expectedStatusesForAction = {
@@ -177,7 +171,6 @@ export const expectedStatusesForAction = {
    [DownloadAction.Pause]: [ DownloadStatus.Paused ],
    [DownloadAction.Cancel]: [ DownloadStatus.Canceled ],
 
-   // Everything but "unknown" is valid:
    [DownloadAction.Listen]: [
       DownloadStatus.Pending,
       DownloadStatus.Idle,

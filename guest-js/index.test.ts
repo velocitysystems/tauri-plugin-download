@@ -333,17 +333,6 @@ describe('state machine — action availability', () => {
       expect(hasAction(download, DownloadAction.Cancel)).toBe(false);
    });
 
-   it('Unknown: only listen is available', () => {
-      const download = attachDownload({
-         ...IDLE_STATE,
-         status: DownloadStatus.Unknown,
-      });
-
-      expect(hasAction(download, DownloadAction.Listen)).toBe(true);
-      expect(hasAnyAction(download)).toBe(true);
-      expect(hasAction(download, DownloadAction.Cancel)).toBe(false);
-   });
-
    it('attaches only the allowed methods as callable functions', () => {
       const idle = attachDownload(IDLE_STATE);
 
