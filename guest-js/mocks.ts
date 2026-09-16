@@ -50,10 +50,13 @@ export interface MockDownloadPluginController {
    deleteDownload(path: string): boolean;
 
    /**
-    * Updates a mocked download and emits the corresponding change event.
+    * Updates a mocked download and emits the corresponding change event. A `Canceled` or
+    * `Completed` download is removed from the store instead, as on the native platforms.
     *
     * @param download - The download state to store and broadcast.
     * @returns A promise that resolves after the change event is emitted.
+    * @throws If the status is `Pending` or `Unknown`, which the native platforms never
+    * emit.
     */
    emitChange(download: DownloadState<DownloadStatus>): Promise<void>;
 
@@ -98,6 +101,8 @@ export interface MockDownloadPluginController {
     * Stores or replaces a mocked download without emitting a change event.
     *
     * @param download - The download state to store.
+    * @throws If the status is not one a native store can hold: `Idle`, `InProgress` or
+    * `Paused`.
     */
    setDownload(download: DownloadState<DownloadStatus>): void;
 }
@@ -107,6 +112,14 @@ type MockActionResponse<A extends DownloadAction> = Omit<DownloadActionResponse<
 };
 
 const DEFAULT_URL = 'https://example.com/file.zip';
+
+// The native stores only ever hold these: `Canceled` and `Completed` downloads are
+// removed.
+const STORED_STATUSES: readonly DownloadStatus[] = [
+   DownloadStatus.Idle,
+   DownloadStatus.InProgress,
+   DownloadStatus.Paused,
+];
 
 function cloneDownload<S extends DownloadStatus>(download: DownloadState<S>): DownloadState<S> {
    return {
@@ -179,10 +192,25 @@ function getDownloadForPath(
    return cloneDownload(downloadsByPath.get(path) ?? createPendingDownload(path));
 }
 
+/**
+ * Whether a download in this status is removed from the store, as the native platforms
+ * remove a download once it is canceled or completed.
+ */
+function isRemovedStatus(status: DownloadStatus): boolean {
+   return status === DownloadStatus.Canceled || status === DownloadStatus.Completed;
+}
+
 function setDownloadForPath(
    downloadsByPath: Map<string, DownloadState<DownloadStatus>>,
    download: DownloadState<DownloadStatus>
 ): void {
+   if (!STORED_STATUSES.includes(download.status)) {
+      throw new Error(
+         `Cannot store mocked download ${download.path} with status "${download.status}": `
+         + `native stores only hold ${STORED_STATUSES.join(', ')} downloads`
+      );
+   }
+
    downloadsByPath.set(download.path, cloneDownload(download));
 }
 
@@ -269,11 +297,16 @@ export function clearDownloadMocks(): void {
  *
  * This helper approximates backend/native state transitions for common test flows.
  * It is not a backend contract and does not transition downloads to `Completed`.
+ * Canceling a download, or emitting a `Canceled` or `Completed` change, removes it from
+ * the store as the native platforms do, so `get()` then returns a `Pending` download.
+ * Seeded downloads, and those passed to `setDownload()`, must be `Idle`, `InProgress` or
+ * `Paused`, the only statuses a native store holds.
  * Create options are persisted with mocked downloads, but network-policy enforcement
  * is not simulated.
  * It only simulates the desktop event path and always returns `false` for `is_native`,
  * so tests that need the native/mobile listener branch require a separate approach.
- * Use `emitChange()` or `setDownload()` to simulate progress updates or terminal states.
+ * Use `emitChange()` to simulate progress updates or terminal states, or
+ * `setDownload()` to seed a stored state without emitting an event.
  * As on the native platforms, `start`, `resume`, `pause` and `cancel` reject with
  * `Not Found: <path>` for a path with no stored download.
  *
@@ -307,7 +340,7 @@ export function mockDownloadPlugin(
 
       switch (action) {
          case DownloadAction.Create: {
-            if (currentDownload.status !== DownloadStatus.Pending) {
+            if (downloadsByPath.has(path)) {
                return createNoOpActionResponse(action, currentDownload);
             }
 
@@ -356,17 +389,10 @@ export function mockDownloadPlugin(
             return createActionResponse(action, nextDownload, true);
          }
          case DownloadAction.Cancel: {
-            const canCancel = currentDownload.status === DownloadStatus.Idle
-               || currentDownload.status === DownloadStatus.InProgress
-               || currentDownload.status === DownloadStatus.Paused;
-
-            if (!canCancel) {
-               return createNoOpActionResponse(action, currentDownload);
-            }
-
+            // Every stored status can be canceled, and a missing path was rejected above.
             const nextDownload = createTransitionDownload(currentDownload, DownloadStatus.Canceled);
 
-            setDownloadForPath(downloadsByPath, nextDownload);
+            downloadsByPath.delete(path);
 
             return createActionResponse(action, nextDownload, true);
          }
@@ -444,7 +470,12 @@ export function mockDownloadPlugin(
        * Emits a mocked desktop download change event.
        */
       async emitChange(download: DownloadState<DownloadStatus>): Promise<void> {
-         setDownloadForPath(downloadsByPath, download);
+         if (isRemovedStatus(download.status)) {
+            downloadsByPath.delete(download.path);
+         } else {
+            setDownloadForPath(downloadsByPath, download);
+         }
+
          await emit(DOWNLOAD_EVENT_NAME, cloneDownload(download));
       },
 
