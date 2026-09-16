@@ -400,6 +400,8 @@ Use `emitChange()` to simulate progress updates or terminal-state events, or
 `setDownload()` to seed a specific state without emitting an event.
 It only simulates the desktop event path and returns `false` for `is_native`,
 so tests for the native/mobile listener branch need a separate approach.
+As on the native platforms, `start`, `resume`, `pause` and `cancel` reject with
+`Not Found: <path>` for a path with no stored download.
 
 `createMockDownloadState()` computes `progress` from `receivedBytes` and
 `totalBytes` when `progress` is not explicitly provided. For unknown-size

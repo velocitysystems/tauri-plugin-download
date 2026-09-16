@@ -274,6 +274,8 @@ export function clearDownloadMocks(): void {
  * It only simulates the desktop event path and always returns `false` for `is_native`,
  * so tests that need the native/mobile listener branch require a separate approach.
  * Use `emitChange()` or `setDownload()` to simulate progress updates or terminal states.
+ * As on the native platforms, `start`, `resume`, `pause` and `cancel` reject with
+ * `Not Found: <path>` for a path with no stored download.
  *
  * @param options Initial mocked download state.
  * @return Controller for inspecting invocations and mutating mocked download state.
@@ -297,6 +299,11 @@ export function mockDownloadPlugin(
       args: Record<string, unknown>
    ): MockActionResponse<A> {
       const currentDownload = getDownloadForPath(downloadsByPath, path);
+
+      // As on the native platforms, only `create` accepts a path with no stored download.
+      if (action !== DownloadAction.Create && !downloadsByPath.has(path)) {
+         throw new Error(`Not Found: ${path}`);
+      }
 
       switch (action) {
          case DownloadAction.Create: {

@@ -23,6 +23,13 @@ const ACTIONS = [
    DownloadAction.Cancel,
 ] as const;
 
+const PATH_ACTIONS = [
+   DownloadAction.Start,
+   DownloadAction.Resume,
+   DownloadAction.Pause,
+   DownloadAction.Cancel,
+] as const;
+
 const STATUSES = [
    DownloadStatus.Pending,
    DownloadStatus.Idle,
@@ -270,6 +277,12 @@ describe('mockDownloadPlugin', () => {
 
       expect(response.isExpectedStatus).toBe(true);
       expect(response.download.status).toBe(DownloadStatus.InProgress);
+   });
+
+   it.each(PATH_ACTIONS)('rejects %s for a path with no stored download', async (action) => {
+      mockDownloadPlugin();
+
+      await expect(invokeAction(action, '/tmp/missing.zip')).rejects.toThrow('Not Found: /tmp/missing.zip');
    });
 
    it.each(ACTION_STATUS_CASES)('keeps mocked action responses aligned with action tables for %s from %s', async (action, status) => {
