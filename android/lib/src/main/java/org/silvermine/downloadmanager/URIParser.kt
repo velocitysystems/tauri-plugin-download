@@ -9,15 +9,15 @@ import java.net.URI
  */
 fun parsePath(pathString: String): String {
    if (pathString.isEmpty()) {
-      throw IllegalArgumentException("Path cannot be empty")
+      throw IllegalArgumentException("Path Error: path cannot be empty")
    }
 
    if (!pathString.startsWith("/")) {
-      throw IllegalArgumentException("Path must be absolute")
+      throw IllegalArgumentException("Path Error: path must be absolute")
    }
 
    if (fileName(pathString) == null) {
-      throw IllegalArgumentException("Path must have a filename")
+      throw IllegalArgumentException("Path Error: path must have a filename")
    }
 
    return pathString
@@ -39,24 +39,32 @@ private fun fileName(path: String): String? {
  * Checks that the URL is valid, has a valid scheme (http or https) and has a valid host.
  */
 fun parseURI(urlString: String): String {
+   if (urlString.isEmpty()) {
+      throw IllegalArgumentException("URL Error: URL cannot be empty")
+   }
+
    val uri = try {
       URI(urlString)
    } catch (e: Exception) {
-      throw IllegalArgumentException("Invalid URL: $urlString")
+      throw IllegalArgumentException("URL Error: Invalid URL: $urlString")
    }
 
+   // Without a scheme the string is not an absolute URL, which is where Rust's parser
+   // stops too, so it gets the same message rather than a scheme error.
    val scheme = uri.scheme?.lowercase()
+      ?: throw IllegalArgumentException("URL Error: Invalid URL: $urlString")
+
    if (scheme != "http" && scheme != "https") {
-      throw IllegalArgumentException("Invalid URL scheme '${scheme ?: "none"}': must be http or https")
+      throw IllegalArgumentException("URL Error: Invalid URL scheme '$scheme': must be http or https")
    }
 
    val host = uri.host
    if (host.isNullOrEmpty()) {
-      throw IllegalArgumentException("URL must have a host")
+      throw IllegalArgumentException("URL Error: URL must have a host")
    }
 
    if (uri.userInfo != null) {
-      throw IllegalArgumentException("URL must not contain credentials")
+      throw IllegalArgumentException("URL Error: URL must not contain credentials")
    }
 
    return urlString

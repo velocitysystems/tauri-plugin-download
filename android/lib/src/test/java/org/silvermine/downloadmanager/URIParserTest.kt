@@ -63,6 +63,17 @@ class URIParserTest {
    }
 
    @Test
+   fun `path messages match the other platforms`() {
+      val message = { path: String -> assertThrows(IllegalArgumentException::class.java) { parsePath(path) }.message }
+
+      assertEquals("Path Error: path cannot be empty", message(""))
+      assertEquals("Path Error: path must be absolute", message("file.txt"))
+      assertEquals("Path Error: path must have a filename", message("/"))
+   }
+
+   // -- parseURI tests --
+
+   @Test
    fun `valid URLs`() {
       assertEquals("https://example.com/file.mp4", parseURI("https://example.com/file.mp4"))
       assertEquals("http://example.com/file.mp4", parseURI("http://example.com/file.mp4"))
@@ -102,6 +113,19 @@ class URIParserTest {
       assertThrows(IllegalArgumentException::class.java) {
          parseURI("https://user@example.com/file.mp4")
       }
+   }
+
+   @Test
+   fun `URL messages match the other platforms`() {
+      val message = { url: String -> assertThrows(IllegalArgumentException::class.java) { parseURI(url) }.message }
+
+      assertEquals("URL Error: URL cannot be empty", message(""))
+      assertEquals("URL Error: Invalid URL: not a valid url", message("not a valid url"))
+      assertEquals("URL Error: Invalid URL: example.com/file.mp4", message("example.com/file.mp4"))
+      assertEquals(
+         "URL Error: Invalid URL scheme 'ftp': must be http or https",
+         message("ftp://example.com/file.mp4")
+      )
    }
 
    @Test

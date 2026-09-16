@@ -10,31 +10,51 @@ import Foundation
 /// Returns it unchanged, as it is the download's identity.
 public func parsePath(_ pathString: String) throws -> String {
    if pathString.isEmpty {
-       throw DownloadError.invalidPath("Path cannot be empty")
+      throw DownloadError.invalidPath("path cannot be empty")
    }
 
    guard pathString.hasPrefix("/") else {
-       throw DownloadError.invalidPath("Path must be absolute")
+      throw DownloadError.invalidPath("path must be absolute")
    }
 
-   let filename = URL(fileURLWithPath: pathString).lastPathComponent
-   if filename.isEmpty || filename == "/" {
-       throw DownloadError.invalidPath("Path must have a filename")
+   guard fileName(pathString) != nil else {
+      throw DownloadError.invalidPath("path must have a filename")
    }
    
    return pathString
 }
 
+/// The path's last component, or `nil` for "/" or a trailing "..", as Rust's
+/// `Path::file_name()` does. A string check: nothing is resolved.
+private func fileName(_ path: String) -> String? {
+   let components = path.split(separator: "/").filter { $0 != "." }
+
+   guard let last = components.last else {
+      return nil
+   }
+
+   return last == ".." ? nil : String(last)
+}
+
 /// Parses and validates a download URL string.
 /// Checks that the URL is valid, has a valid scheme (http or https) and has a valid host.
 public func parseURL(_ urlString: String) throws -> URL {
+   if urlString.isEmpty {
+      throw DownloadError.invalidURL("URL cannot be empty")
+   }
+
    guard let url = URL(string: urlString) else {
       throw DownloadError.invalidURL("Invalid URL: \(urlString)")
    }
    
-   let scheme = url.scheme?.lowercased()
+   // Without a scheme the string is not an absolute URL, which is where Rust's parser
+   // stops too, so it gets the same message rather than a scheme error.
+   guard let scheme = url.scheme?.lowercased() else {
+      throw DownloadError.invalidURL("Invalid URL: \(urlString)")
+   }
+
    guard scheme == "http" || scheme == "https" else {
-      throw DownloadError.invalidURL("Invalid URL scheme '\(scheme ?? "none")': must be http or https")
+      throw DownloadError.invalidURL("Invalid URL scheme '\(scheme)': must be http or https")
    }
    
    guard let host = url.host, !host.isEmpty else {
