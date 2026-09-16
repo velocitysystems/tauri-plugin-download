@@ -82,21 +82,13 @@ public final class DownloadManager: NSObject {
    /**
     Gets a download operation.
 
-    If the download exists in the store, returns it. If not found, returns a download
-    in `pending` state (not persisted to store). The caller can then call `create` to
-    persist it and transition to `idle` state.
-
     - Parameter path: The download path.
-    - Returns: The download operation.
+    - Returns: The download operation, or `nil` if no download exists for the path.
     */
-   public func get(path: String) async -> DownloadItem {
+   public func get(path: String) async -> DownloadItem? {
       await ensureReconciled()
 
-      if let record = await store.findByPath(path) {
-         return record.toItem()
-      }
-
-      return DownloadRecord(url: URL(fileURLWithPath: ""), path: path, status: .pending).toItem()
+      return await store.findByPath(path)?.toItem()
    }
    
    /**

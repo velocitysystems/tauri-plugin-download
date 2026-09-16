@@ -96,7 +96,7 @@ struct DownloadsView: View {
       Task {
          let download = await manager.get(path: path)
          
-         if download.status == .pending {
+         if download == nil {
             if autoCreate {
                _ = await manager.create(path: path, url: url, options: options)
             } else {

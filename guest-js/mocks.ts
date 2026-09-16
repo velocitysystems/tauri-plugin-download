@@ -396,7 +396,9 @@ export function mockDownloadPlugin(
             return cloneDownloads(downloadsByPath);
          }
          case 'get': {
-            return getDownloadForPath(downloadsByPath, getPathArg(invocation.args));
+            const download = downloadsByPath.get(getPathArg(invocation.args));
+
+            return download ? cloneDownload(download) : null;
          }
          case 'create': {
             return applyAction(DownloadAction.Create, getPathArg(invocation.args), invocation.args);

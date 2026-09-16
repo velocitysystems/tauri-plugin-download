@@ -49,9 +49,9 @@ export async function list(): Promise<DownloadWithAnyStatus[]> {
  * ```
  */
 export async function get(path: string): Promise<DownloadWithAnyStatus> {
-   const download = await invoke<DownloadState<DownloadStatus>>('plugin:download|get', { path });
+   const download = await invoke<DownloadState<DownloadStatus> | null>('plugin:download|get', { path });
 
-   return attachDownload(download);
+   return attachDownload(download ?? { url: '', path, status: DownloadStatus.Pending });
 }
 
 export * from './types';

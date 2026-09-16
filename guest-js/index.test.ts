@@ -77,15 +77,7 @@ beforeEach(() => {
          if (path === '/tmp/file.zip') {
             return IDLE_STATE;
          }
-         return {
-            url: '',
-            path,
-            options: { allowMetered: true },
-            receivedBytes: 0,
-            totalBytes: null,
-            progress: 0,
-            status: DownloadStatus.Pending,
-         };
+         return null;
       }
       if (cmd === 'plugin:download|create') {
          return {
@@ -158,10 +150,18 @@ describe('get', () => {
       expect(hasAction(download, DownloadAction.Resume)).toBe(false);
    });
 
-   it('returns a Pending download for unknown path', async () => {
+   it('returns a Pending download when the plugin returns null for an unknown path', async () => {
       const download = await get('/tmp/unknown.zip');
 
-      expect(download.status).toBe(DownloadStatus.Pending);
+      expect(download).toEqual({
+         url: '',
+         path: '/tmp/unknown.zip',
+         options: { allowMetered: true },
+         receivedBytes: 0,
+         totalBytes: null,
+         progress: 0,
+         status: DownloadStatus.Pending,
+      });
       expect(hasAction(download, DownloadAction.Create)).toBe(true);
       expect(hasAnyAction(download)).toBe(true);
    });
