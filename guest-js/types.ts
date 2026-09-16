@@ -20,7 +20,10 @@ export enum DownloadStatus {
    /** Status could not be determined. */
    Unknown = 'unknown',
 
-   /** Download has not yet been created/persisted. */
+   /**
+    * Download has not yet been created/persisted. Exists only in this SDK: the native
+    * layers return `null` for a path with no stored download, and `get()` maps it here.
+    */
    Pending = 'pending',
 
    /** Download has been created and is ready to start. */

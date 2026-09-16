@@ -59,8 +59,6 @@ pub enum DownloadStatus {
    /// Status could not be determined.
    #[default]
    Unknown,
-   /// Download has not yet been created/persisted.
-   Pending,
    /// Download has been created and is ready to start.
    Idle,
    /// Download is in progress.
@@ -143,7 +141,6 @@ impl fmt::Display for DownloadStatus {
    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
       let text = match self {
          DownloadStatus::Unknown => "unknown",
-         DownloadStatus::Pending => "pending",
          DownloadStatus::Idle => "idle",
          DownloadStatus::InProgress => "inProgress",
          DownloadStatus::Paused => "paused",
@@ -383,7 +380,6 @@ mod tests {
       // whether it reaches a reader through a log line or through JSON.
       let statuses = [
          DownloadStatus::Unknown,
-         DownloadStatus::Pending,
          DownloadStatus::Idle,
          DownloadStatus::InProgress,
          DownloadStatus::Paused,
@@ -398,7 +394,6 @@ mod tests {
          // enforce that second step.
          match &status {
             DownloadStatus::Unknown
-            | DownloadStatus::Pending
             | DownloadStatus::Idle
             | DownloadStatus::InProgress
             | DownloadStatus::Paused
