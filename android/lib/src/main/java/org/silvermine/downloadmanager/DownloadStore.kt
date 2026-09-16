@@ -125,6 +125,7 @@ internal class DownloadStore(directory: File) {
       internal fun storeFile(directory: File): File = File(directory, STORE_FILENAME)
 
       private val json = Json { ignoreUnknownKeys = true }
+      private val schemaVersionPattern = Regex("0|[1-9][0-9]*")
 
       /**
        * Decodes persisted records.
@@ -148,9 +149,14 @@ internal class DownloadStore(directory: File) {
          val document = root as? JsonObject
             ?: throw SerializationException("Malformed store envelope")
          val versionField = document["version"] as? JsonPrimitive
-         val version = versionField?.takeUnless { it.isString }?.longOrNull
+         // Tree parsing accepts primitive tokens such as +1 and 01. Require JSON
+         // integer syntax before converting so malformed numbers cannot become v1.
+         val version = versionField
+            ?.takeUnless { it.isString }
+            ?.takeIf { schemaVersionPattern.matches(it.content) }
+            ?.longOrNull
          val records = document["downloads"] as? JsonArray
-         if (version == null || version < 0 || records == null) {
+         if (version == null || records == null) {
             throw SerializationException("Malformed store envelope")
          }
          if (version != CURRENT_SCHEMA_VERSION.toLong()) {

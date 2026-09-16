@@ -935,7 +935,9 @@ mod tests {
 
    #[test]
    fn test_rejects_invalid_version_types_and_values() {
-      for version in [r#""1""#, "true", "false", "null", "-1", "1.5", "[]", "{}"] {
+      for version in [
+         r#""1""#, "true", "false", "null", "-1", "1.5", "+1", "01", "[]", "{}",
+      ] {
          let text = format!(r#"{{"version":{version},"downloads":[]}}"#);
          assert!(
             matches!(decode_store(text.as_bytes()), Err(Error::Store(message))
