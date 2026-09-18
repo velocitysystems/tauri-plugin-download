@@ -85,6 +85,17 @@ final class DownloadStoreSchemaTests: XCTestCase {
       }
    }
 
+   func testVersionTokenValidationRejectsOtherEncodings() throws {
+      for encoding in [
+         String.Encoding.utf16LittleEndian, .utf16BigEndian, .utf32LittleEndian, .utf32BigEndian
+      ] {
+         let bytes = try XCTUnwrap(#"{"version":1.0,"downloads":[]}"#.data(using: encoding))
+         XCTAssertThrowsError(try DownloadStore.decodeRecords(from: bytes)) {
+            XCTAssertEqual($0.localizedDescription, "Malformed store envelope")
+         }
+      }
+   }
+
    func testChecksUnsupportedVersionBeforeDecodingRecords() {
       for version in [UInt32(0), UInt32(2), UInt32.max] {
          assertDecodeError(

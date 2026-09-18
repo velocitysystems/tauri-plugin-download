@@ -33,6 +33,7 @@ private func validateVersionTokens(in data: Data) throws {
    let whitespace: [UInt8] = [0x20, 0x09, 0x0A, 0x0D]
    var index = 0
    var depth = 0
+   var foundVersion = false
 
    while index < bytes.count {
       switch bytes[index] {
@@ -83,10 +84,14 @@ private func validateVersionTokens(in data: Data) throws {
                valueEnd < bytes.count,
                whitespace.contains(bytes[valueEnd]) || bytes[valueEnd] == 0x2C || bytes[valueEnd] == 0x7D
          else { throw StoreDecodingError.malformedEnvelope }
+         foundVersion = true
       default:
          index += 1
       }
    }
+   // Require a token we actually checked. Foundation can also decode UTF-16/32,
+   // whereas the shared store format and this token scan use UTF-8.
+   guard foundVersion else { throw StoreDecodingError.malformedEnvelope }
 }
 
 /// The current record type remains the v1 payload until a real migration is needed.
