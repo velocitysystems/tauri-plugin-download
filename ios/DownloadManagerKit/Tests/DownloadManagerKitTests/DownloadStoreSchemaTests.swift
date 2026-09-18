@@ -47,7 +47,8 @@ final class DownloadStoreSchemaTests: XCTestCase {
 
    func testRejectsInvalidVersionTypesAndValues() {
       for version in [
-         #""1""#, "true", "false", "null", "-1", "1.5", "1.0", "1e0", "+1", "01", "[]", "{}"
+         #""1""#, "true", "false", "null", "-1", "1.5", "1.0", "1e0", "1E0", "10e-1", "0.1e1",
+         "+1", "01", "[]", "{}"
       ] {
          assertDecodeError(
             "{\"version\":\(version),\"downloads\":[]}", "Malformed store envelope"
@@ -85,13 +86,19 @@ final class DownloadStoreSchemaTests: XCTestCase {
       }
    }
 
-   func testVersionTokenValidationRejectsOtherEncodings() throws {
+   func testVersionTokenValidationAcrossEncodings() throws {
       for encoding in [
-         String.Encoding.utf16LittleEndian, .utf16BigEndian, .utf32LittleEndian, .utf32BigEndian
+         String.Encoding.utf8, .utf16LittleEndian, .utf16BigEndian, .utf32LittleEndian, .utf32BigEndian
       ] {
-         let bytes = try XCTUnwrap(#"{"version":1.0,"downloads":[]}"#.data(using: encoding))
-         XCTAssertThrowsError(try DownloadStore.decodeRecords(from: bytes)) {
-            XCTAssertEqual($0.localizedDescription, "Malformed store envelope")
+         let valid = try XCTUnwrap(#"{"version":1,"downloads":[]}"#.data(using: encoding))
+         XCTAssertTrue(try DownloadStore.decodeRecords(from: valid).isEmpty)
+         for version in ["1.0", "1e0", "1E0", "10e-1", "0.1e1", "true", "false"] {
+            let bytes = try XCTUnwrap(
+               #"{"version":\#(version),"downloads":[]}"#.data(using: encoding)
+            )
+            XCTAssertThrowsError(try DownloadStore.decodeRecords(from: bytes)) {
+               XCTAssertEqual($0.localizedDescription, "Malformed store envelope")
+            }
          }
       }
    }
