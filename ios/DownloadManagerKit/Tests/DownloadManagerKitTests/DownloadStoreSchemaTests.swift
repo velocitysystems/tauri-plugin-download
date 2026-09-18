@@ -46,10 +46,42 @@ final class DownloadStoreSchemaTests: XCTestCase {
    }
 
    func testRejectsInvalidVersionTypesAndValues() {
-      for version in [#""1""#, "true", "false", "null", "-1", "1.5", "+1", "01", "[]", "{}"] {
+      for version in [
+         #""1""#, "true", "false", "null", "-1", "1.5", "1.0", "1e0", "+1", "01", "[]", "{}"
+      ] {
          assertDecodeError(
             "{\"version\":\(version),\"downloads\":[]}", "Malformed store envelope"
          )
+      }
+   }
+
+   func testVersionTokenValidationIgnoresNestedFieldsAndStringContents() throws {
+      let text = #"{"extra":{"version":1.0,"items":[{"version":1e0}]},"text":"\"version\":1.0, } ] \\ \"","downloads":[],"version" : 1 }"#
+      XCTAssertTrue(try DownloadStore.decodeRecords(from: Data(text.utf8)).isEmpty)
+
+      for version in ["1.0", "1e0"] {
+         let invalid = #"{"extra":{"version":1},"text":"\"version\":1","downloads":[],"version":\#(version)}"#
+         assertDecodeError(invalid, "Malformed store envelope")
+      }
+   }
+
+   func testVersionTokenValidationDecodesEscapedKeys() throws {
+      let text = #"{"\u0076ersion":1,"downloads":[]}"#
+      XCTAssertTrue(try DownloadStore.decodeRecords(from: Data(text.utf8)).isEmpty)
+      for version in ["1.0", "1e0"] {
+         assertDecodeError(
+            #"{"\u0076ersion":\#(version),"downloads":[]}"#, "Malformed store envelope"
+         )
+      }
+   }
+
+   func testVersionTokenValidationStillRejectsMalformedJSON() {
+      for text in [
+         #"{"version":1,"downloads":[],"text":"unterminated"#,
+         #"{"version":1,"downloads":[],"text":"escaped final quote\""#,
+         #"{"version":1,"downloads":[],"extra":[}"#
+      ] {
+         assertDecodeError(text, "Malformed store envelope")
       }
    }
 

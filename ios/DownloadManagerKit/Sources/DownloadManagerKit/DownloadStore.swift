@@ -25,6 +25,70 @@ private enum StoreDecodingError: LocalizedError {
    }
 }
 
+/// JSONDecoder accepts whole-valued decimals and exponents as UInt32. Check the
+/// original UTF-8 token for root-level version keys before that conversion loses
+/// their spelling. Foundation still validates the complete JSON document.
+private func validateVersionTokens(in data: Data) throws {
+   let bytes = [UInt8](data)
+   let whitespace: [UInt8] = [0x20, 0x09, 0x0A, 0x0D]
+   var index = 0
+   var depth = 0
+
+   while index < bytes.count {
+      switch bytes[index] {
+      case 0x7B, 0x5B: // { [
+         depth += 1
+         index += 1
+      case 0x7D, 0x5D: // } ]
+         depth -= 1
+         index += 1
+      case 0x22: // Skip strings, including escaped quotes and structural characters.
+         let start = index
+         index += 1
+         var closed = false
+         while index < bytes.count {
+            if bytes[index] == 0x5C { // Backslash escapes the next byte.
+               index += 2
+            } else if bytes[index] == 0x22 {
+               index += 1
+               closed = true
+               break
+            } else {
+               index += 1
+            }
+         }
+         guard closed else { throw StoreDecodingError.malformedEnvelope }
+         guard depth == 1 else { continue }
+
+         var valueStart = index
+         while valueStart < bytes.count && whitespace.contains(bytes[valueStart]) {
+            valueStart += 1
+         }
+         guard valueStart < bytes.count && bytes[valueStart] == 0x3A else { continue } // :
+         // Decode key escapes too, so "\u0076ersion" is treated as "version".
+         let key = try JSONDecoder().decode(String.self, from: Data(bytes[start..<index]))
+         guard key == "version" else { continue }
+         valueStart += 1
+         while valueStart < bytes.count && whitespace.contains(bytes[valueStart]) {
+            valueStart += 1
+         }
+         var valueEnd = valueStart
+         while valueEnd < bytes.count && (0x30...0x39).contains(bytes[valueEnd]) {
+            valueEnd += 1
+         }
+         // Require unsigned integer notation with no leading zeros. The decoder
+         // handles the UInt32 range and supported-version checks afterwards.
+         guard valueEnd > valueStart,
+               valueEnd - valueStart == 1 || bytes[valueStart] != 0x30,
+               valueEnd < bytes.count,
+               whitespace.contains(bytes[valueEnd]) || bytes[valueEnd] == 0x2C || bytes[valueEnd] == 0x7D
+         else { throw StoreDecodingError.malformedEnvelope }
+      default:
+         index += 1
+      }
+   }
+}
+
 /// The current record type remains the v1 payload until a real migration is needed.
 private struct StoreDocument: Codable {
    let version: UInt32
@@ -181,6 +245,7 @@ actor DownloadStore {
    /// distinguish invalid envelopes, unsupported versions, and invalid records.
    static func decodeRecords(from data: Data) throws -> [DownloadRecord] {
       do {
+         try validateVersionTokens(in: data)
          return try JSONDecoder().decode(StoreDocument.self, from: data).downloads
       } catch let error as StoreDecodingError {
          throw error
