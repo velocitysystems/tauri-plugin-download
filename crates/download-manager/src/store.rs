@@ -19,6 +19,8 @@ struct StoreDocument<T> {
    downloads: Vec<T>,
 }
 
+/// Decode records after validating the store envelope and supported schema version.
+/// Reject the whole document on invalid records, using errors that omit input data.
 fn decode_store(data: &[u8]) -> crate::Result<Vec<DownloadRecord>> {
    // Require an object explicitly: serde can also deserialize structs from arrays.
    let fields: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(data)
