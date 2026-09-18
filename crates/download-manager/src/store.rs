@@ -3,10 +3,43 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
 use crate::Error;
 use crate::models::{DownloadRecord, DownloadStatus};
+
+const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+/// Private on-disk format. Record types and migrations are introduced only when
+/// a future schema needs them; v1 uses the current persisted record unchanged.
+#[derive(Serialize, Deserialize)]
+struct StoreDocument<T> {
+   version: u32,
+   downloads: Vec<T>,
+}
+
+/// Decode records after validating the store envelope and supported schema version.
+/// Reject the whole document on invalid records, using errors that omit input data.
+fn decode_store(data: &[u8]) -> crate::Result<Vec<DownloadRecord>> {
+   // Require an object explicitly: serde can also deserialize structs from arrays.
+   let fields: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(data)
+      .map_err(|_| Error::Store("Malformed store envelope".to_string()))?;
+   let document: StoreDocument<serde_json::Value> =
+      serde_json::from_value(serde_json::Value::Object(fields))
+         .map_err(|_| Error::Store("Malformed store envelope".to_string()))?;
+
+   if document.version != CURRENT_SCHEMA_VERSION {
+      return Err(Error::Store(format!(
+         "Unsupported store version: {} (expected {})",
+         document.version, CURRENT_SCHEMA_VERSION
+      )));
+   }
+
+   // Keep decoder details out of logs: they can contain URLs and other input values.
+   serde_json::from_value(serde_json::Value::Array(document.downloads))
+      .map_err(|_| Error::Store("Invalid store records".to_string()))
+}
 
 pub(crate) enum UpdateIfStatusResult {
    Updated(DownloadRecord),
@@ -270,8 +303,7 @@ impl DownloadStore {
 
       let data =
          fs::read(&inner.path).map_err(|e| Error::Store(format!("Failed to read store: {}", e)))?;
-      inner.downloads = serde_json::from_slice(&data)
-         .map_err(|e| Error::Store(format!("Failed to parse store: {}", e)))?;
+      inner.downloads = decode_store(&data)?;
 
       Ok(())
    }
@@ -297,7 +329,11 @@ fn save_inner(inner: &StoreInner) -> crate::Result<()> {
       .map_err(|e| Error::Store(format!("Failed to create store directory: {}", e)))?;
 
    // Serialize before touching the disk so a failure here cannot leave a temp file behind.
-   let data = serde_json::to_vec(&inner.downloads)
+   let document = StoreDocument {
+      version: CURRENT_SCHEMA_VERSION,
+      downloads: inner.downloads.iter().collect(),
+   };
+   let data = serde_json::to_vec(&document)
       .map_err(|e| Error::Store(format!("Failed to serialize store: {}", e)))?;
 
    // The temp file has to be a sibling of the store: `rename` cannot cross a mount point.
@@ -810,7 +846,8 @@ mod tests {
       let dir = TempDir::new().unwrap();
       let path = dir.path().join("downloads.json");
       let items = vec![sample_record("/tmp/file.mp4")];
-      fs::write(&path, serde_json::to_vec(&items).unwrap()).unwrap();
+      let document = serde_json::json!({ "version": 1, "downloads": items });
+      fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
 
       let store = DownloadStore::new(path);
       store.load().unwrap();
@@ -833,6 +870,133 @@ mod tests {
       let store = DownloadStore::new(dir.path().join("nested/dir/downloads.json"));
       store.create(sample_record("/tmp/file.mp4")).unwrap();
       assert!(dir.path().join("nested/dir/downloads.json").exists());
+      let reloaded = DownloadStore::new(dir.path().join("nested/dir/downloads.json"));
+      reloaded.load().unwrap();
+      assert_eq!(reloaded.list().unwrap().len(), 1);
+   }
+
+   #[test]
+   fn test_writer_emits_v1_and_round_trips_all_record_fields() {
+      let (store, dir) = temp_store();
+      let mut item = sample_record("/tmp/file.mp4");
+      item.options.allow_metered = false;
+      item.received_bytes = 123;
+      item.total_bytes = Some(456);
+      item.status = DownloadStatus::Paused;
+      store.create(item.clone()).unwrap();
+
+      let bytes = fs::read(dir.path().join("downloads.json")).unwrap();
+      let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+      assert_eq!(document["version"], serde_json::json!(1));
+      assert_eq!(document["downloads"], serde_json::json!([item]));
+      assert_eq!(
+         serde_json::to_value(decode_store(&bytes).unwrap()).unwrap(),
+         serde_json::json!([item])
+      );
+
+      store.delete(&item.path).unwrap();
+      let bytes = fs::read(dir.path().join("downloads.json")).unwrap();
+      assert_eq!(
+         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+         serde_json::json!({ "version": 1, "downloads": [] })
+      );
+      assert!(decode_store(&bytes).unwrap().is_empty());
+   }
+
+   #[test]
+   fn test_missing_file_is_not_created_on_load() {
+      let (store, dir) = temp_store();
+      store.load().unwrap();
+      assert!(!dir.path().join("downloads.json").exists());
+   }
+
+   #[test]
+   fn test_rejects_legacy_arrays_and_malformed_envelopes() {
+      for text in [
+         "[]",
+         "[1, []]",
+         "[{}]",
+         "null",
+         "true",
+         "1",
+         "{}",
+         r#"{"version":1}"#,
+         r#"{"downloads":[]}"#,
+         r#"{"version":1,"downloads":null}"#,
+         r#"{"version":1,"downloads":{}}"#,
+         r#"{"version":1,"downloads":"private input"}"#,
+         "not json",
+      ] {
+         assert!(
+            matches!(decode_store(text.as_bytes()), Err(Error::Store(message))
+               if message == "Malformed store envelope"),
+            "Accepted or misclassified {text}"
+         );
+      }
+   }
+
+   #[test]
+   fn test_rejects_invalid_version_types_and_values() {
+      for version in [
+         r#""1""#, "true", "false", "null", "-1", "1.5", "1.0", "1e0", "+1", "01", "[]", "{}",
+      ] {
+         let text = format!(r#"{{"version":{version},"downloads":[]}}"#);
+         assert!(
+            matches!(decode_store(text.as_bytes()), Err(Error::Store(message))
+               if message == "Malformed store envelope"),
+            "Accepted or misclassified {version}"
+         );
+      }
+   }
+
+   #[test]
+   fn test_unsupported_version_is_checked_before_record_decoding() {
+      for version in [0, 2, u32::MAX] {
+         let text = format!(r#"{{"version":{version},"downloads":[{{"future":"record"}}]}}"#);
+         assert!(
+            matches!(decode_store(text.as_bytes()), Err(Error::Store(message))
+            if message == format!("Unsupported store version: {version} (expected 1)"))
+         );
+      }
+   }
+
+   #[test]
+   fn test_unknown_fields_are_ignored_without_rewriting_on_load() {
+      let (store, dir) = temp_store();
+      let mut item = serde_json::to_value(sample_record("/tmp/file.mp4")).unwrap();
+      item["extraRecordField"] = serde_json::json!(true);
+      let document = serde_json::json!({
+         "version": 1, "downloads": [item], "extraEnvelopeField": "ignored"
+      });
+      let bytes = serde_json::to_vec_pretty(&document).unwrap();
+      let path = dir.path().join("downloads.json");
+      fs::write(&path, &bytes).unwrap();
+
+      store.load().unwrap();
+      assert_eq!(store.list().unwrap().len(), 1);
+      assert_eq!(fs::read(path).unwrap(), bytes);
+   }
+
+   #[test]
+   fn test_invalid_record_does_not_publish_partial_state_or_expose_input() {
+      let (store, dir) = temp_store();
+      store.create(sample_record("/tmp/existing.mp4")).unwrap();
+      let good = serde_json::to_value(sample_record("/tmp/new.mp4")).unwrap();
+      let mut bad = good.clone();
+      bad["status"] = serde_json::json!("private input");
+      let bytes = serde_json::to_vec(&serde_json::json!({
+         "version": 1, "downloads": [good, bad]
+      }))
+      .unwrap();
+      let path = dir.path().join("downloads.json");
+      fs::write(&path, &bytes).unwrap();
+
+      assert!(matches!(store.load(), Err(Error::Store(message))
+         if message == "Invalid store records"));
+      let items = store.list().unwrap();
+      assert_eq!(items.len(), 1);
+      assert_eq!(items[0].path, "/tmp/existing.mp4");
+      assert_eq!(fs::read(path).unwrap(), bytes);
    }
 
    /// The temp file is removed on drop, so an early return between creating it and

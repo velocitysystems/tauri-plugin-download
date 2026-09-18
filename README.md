@@ -21,6 +21,8 @@ State-driven, resumable download API for Tauri 2.x apps.
       * [Manifest Declarations](#manifest-declarations)
       * [Google Play Console](#google-play-console)
    * [iOS Support](#ios-support)
+   * [Download Store Schema](#download-store-schema)
+      * [Store Tests](#store-tests)
    * [Development Standards](#development-standards)
    * [License](#license)
    * [Contributing](#contributing)
@@ -634,6 +636,61 @@ func application(_ application: UIApplication,
    DownloadManager.shared.setBackgroundCompletionHandler(completionHandler)
 }
 ```
+
+## Download Store Schema
+
+Desktop, Android, and iOS persist `downloads.json` with this envelope:
+
+```json
+{
+   "version": 1,
+   "downloads": []
+}
+```
+
+`version` is an integer file-format revision, independent of the plugin version.
+`downloads` contains the platform's existing persisted records. Both fields are
+required, including for an empty store. Readers validate the envelope and version
+before decoding records, and ignore unknown fields in supported v1 documents.
+
+Old bare arrays, malformed documents, and unsupported versions use the existing
+load-error path: startup continues with an empty store. Loading does not rewrite
+the file, but a later save can overwrite it. Atomic writes protect against
+interrupted writes; preserving rejected files is separate work under
+[#64](https://github.com/silvermine/tauri-plugin-download/issues/64).
+
+When adopting schema v1, remove the old development `downloads.json` from the
+effective store directory, or clear the development app's data. If `store_dir` is
+configured, clean up that directory rather than assuming the platform default.
+There is no migration from the old array format. Future schema changes will add
+migrations and version-specific record types when needed.
+
+On iOS, the default store directory is Application Support. Older development
+builds used Documents; files there are not imported automatically. Clean up the
+effective directory used by the build being tested. iOS records retain their
+optional `resumeDataPath`; the schema change does not move resume data.
+
+### Store Tests
+
+```bash
+cargo test -p download-manager --lib store::tests
+cd android
+./gradlew :lib:test
+./gradlew :lib:connectedDebugAndroidTest
+```
+
+The last command requires a connected Android device or emulator. It exercises
+the real `AtomicFile`, directory creation, backup recovery, and loading rejected
+documents. Kotlin JVM tests cover schema validation and record round trips.
+
+On macOS, run the Swift package tests (also run by the macOS CI job):
+
+```bash
+swift test --package-path ios/DownloadManagerKit
+```
+
+These cover the native store and schema, including iOS resume-data fields. They
+do not replace testing the full plugin on an iOS simulator or device.
 
 ## Development Standards
 
