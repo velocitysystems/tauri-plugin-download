@@ -136,7 +136,9 @@ class DownloadStoreTest {
 
    @Test
    fun `rejects invalid version types and values`() {
-      for (version in listOf("\"1\"", "true", "false", "null", "-1", "1.5", "+1", "01", "[]", "{}")) {
+      for (version in listOf(
+         "\"1\"", "true", "false", "null", "-1", "1.5", "1.0", "1e0", "+1", "01", "[]", "{}",
+      )) {
          val error = assertThrows(SerializationException::class.java) {
             DownloadStore.decodeRecords("""{"version":$version,"downloads":[]}""")
          }
