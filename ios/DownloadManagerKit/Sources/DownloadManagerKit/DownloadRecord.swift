@@ -11,9 +11,7 @@ import Foundation
 /// Carries no `progress` — that is derived, and lives only on [`DownloadItem`],
 /// the type sent to the frontend. `resumeDataPath` is an internal URLSession
 /// concern that deliberately never leaves this type.
-struct DownloadRecord: Identifiable, Codable, Sendable {
-   var id: URL { path }
-
+struct DownloadRecord: Codable, Sendable {
    let url: URL
    let path: URL
    let options: CreateOptions

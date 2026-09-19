@@ -63,7 +63,7 @@ struct DownloadsView: View {
                      pendingDownloads.removeAll { $0.path == pending.path }
                   })
                }
-               ForEach(downloads) { item in
+               ForEach(downloads, id: \.path) { item in
                   DownloadRowView(item: item, manager: manager)
                }
             }

@@ -10,9 +10,7 @@ import Foundation
 /// never decoded, so internal state such as the resume-data path stays out of
 /// the frontend contract. `totalBytes` is nil when the server supplied no
 /// content length, and encodes as an explicit JSON `null`.
-public struct DownloadItem: Identifiable, Encodable, Sendable {
-   public var id: URL { path }
-   
+public struct DownloadItem: Encodable, Sendable {
    public let url: URL
    public let path: URL
    public let options: CreateOptions
