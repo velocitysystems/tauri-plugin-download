@@ -8,8 +8,6 @@ final class URLParserTests: XCTestCase {
    func testValidPath() throws {
       XCTAssertNoThrow(try parsePath("/downloads/file.mp4"))
       XCTAssertNoThrow(try parsePath("/file.txt"))
-      XCTAssertNoThrow(try parsePath("file:///downloads/file.mp4"))
-      XCTAssertNoThrow(try parsePath("file:///file.txt"))
    }
 
    func testEmptyPath() {
@@ -23,6 +21,17 @@ final class URLParserTests: XCTestCase {
 
    func testPathWithoutFilename() {
       XCTAssertThrowsError(try parsePath("/"))
+   }
+
+   func testFileURLIsRejected() {
+      XCTAssertThrowsError(try parsePath("file:///file.txt"))
+   }
+
+   func testPathIsReturnedAsGiven() throws {
+      // A URL would percent-encode the space, handing back a different string from
+      // the one JS keys its listeners by.
+      XCTAssertEqual(try parsePath("/tmp/a b/x.zip"), "/tmp/a b/x.zip")
+      XCTAssertEqual(try parsePath("/tmp//../x.zip"), "/tmp//../x.zip")
    }
 
    // MARK: - parseURL tests
@@ -50,4 +59,5 @@ final class URLParserTests: XCTestCase {
    func testInvalidUrlFormat() {
       XCTAssertThrowsError(try parseURL("not a valid url"))
    }
+
 }

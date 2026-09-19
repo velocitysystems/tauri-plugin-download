@@ -7,29 +7,22 @@ import Foundation
 
 /// Parses and validates a download path string.
 /// Checks that the path is not empty, is an absolute path and contains a filename.
-public func parsePath(_ pathString: String) throws -> URL {
+/// Returns it unchanged, as it is the download's identity.
+public func parsePath(_ pathString: String) throws -> String {
    if pathString.isEmpty {
        throw DownloadError.invalidPath("Path cannot be empty")
    }
 
-   let url: URL
-   if pathString.hasPrefix("file://") {
-       guard let fileURL = URL(string: pathString), fileURL.isFileURL else {
-           throw DownloadError.invalidPath("Invalid file URL: \(pathString)")
-       }
-       url = fileURL
-   } else if pathString.hasPrefix("/") {
-       url = URL(fileURLWithPath: pathString)
-   } else {
+   guard pathString.hasPrefix("/") else {
        throw DownloadError.invalidPath("Path must be absolute")
    }
 
-   let filename = url.lastPathComponent
+   let filename = URL(fileURLWithPath: pathString).lastPathComponent
    if filename.isEmpty || filename == "/" {
        throw DownloadError.invalidPath("Path must have a filename")
    }
    
-   return url
+   return pathString
 }
 
 /// Parses and validates a download URL string.

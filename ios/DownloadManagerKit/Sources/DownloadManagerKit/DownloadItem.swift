@@ -12,7 +12,7 @@ import Foundation
 /// content length, and encodes as an explicit JSON `null`.
 public struct DownloadItem: Encodable, Sendable {
    public let url: URL
-   public let path: URL
+   public let path: String
    public let options: CreateOptions
    public let receivedBytes: UInt64
    public let totalBytes: UInt64?
@@ -21,7 +21,7 @@ public struct DownloadItem: Encodable, Sendable {
 
    init(
       url: URL,
-      path: URL,
+      path: String,
       options: CreateOptions,
       receivedBytes: UInt64,
       totalBytes: UInt64?,

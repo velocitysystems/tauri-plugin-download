@@ -89,7 +89,7 @@ public final class DownloadManager: NSObject {
     - Parameter path: The download path.
     - Returns: The download operation.
     */
-   public func get(path: URL) async -> DownloadItem {
+   public func get(path: String) async -> DownloadItem {
       await ensureReconciled()
 
       if let record = await store.findByPath(path) {
@@ -112,7 +112,7 @@ public final class DownloadManager: NSObject {
     - Returns: The download operation.
     */
    public func create(
-      path: URL,
+      path: String,
       url: URL,
       options: CreateOptions = CreateOptions()
    ) async -> DownloadActionResponse {
@@ -171,11 +171,11 @@ public final class DownloadManager: NSObject {
     - Parameter path: The download path.
     - Returns: The download operation.
     */
-   public func start(path: URL) async throws -> DownloadActionResponse {
+   public func start(path: String) async throws -> DownloadActionResponse {
       await ensureReconciled()
 
       guard var record = await store.findByPath(path) else {
-         throw DownloadError.notFound(path.path)
+         throw DownloadError.notFound(path)
       }
 
       guard record.status == .idle else {
@@ -190,7 +190,7 @@ public final class DownloadManager: NSObject {
 
       let request = Self.request(for: record, userAgent: await userAgentHolder.value)
       let task = session.downloadTask(with: request)
-      task.taskDescription = path.path
+      task.taskDescription = path
       task.resume()
       
       let item = await emitChanged(record)
@@ -204,11 +204,11 @@ public final class DownloadManager: NSObject {
     - Parameter path: The download path.
     - Returns: The download operation.
     */
-   public func resume(path: URL) async throws -> DownloadActionResponse {
+   public func resume(path: String) async throws -> DownloadActionResponse {
       await ensureReconciled()
 
       guard var record = await store.findByPath(path) else {
-         throw DownloadError.notFound(path.path)
+         throw DownloadError.notFound(path)
       }
       
       guard record.status == .paused else {
@@ -236,7 +236,7 @@ public final class DownloadManager: NSObject {
       } else {
          os_log(.info, log: Log.downloadManager,
                 "No usable resume data for %{public}@, restarting from zero",
-                record.path.lastPathComponent)
+                record.fileURL.lastPathComponent)
 
          // Reset before the task starts, so the first callback is not overwritten.
          deleteResumeData(for: record)
@@ -248,7 +248,7 @@ public final class DownloadManager: NSObject {
          task = session.downloadTask(with: request)
       }
 
-      task.taskDescription = path.path
+      task.taskDescription = path
       task.resume()
 
       // Only now that the task owns the data can its file go. Deleting it any
@@ -272,15 +272,15 @@ public final class DownloadManager: NSObject {
     - Parameter path: The download path.
     - Returns: The download operation.
     */
-   public func pause(path: URL) async throws -> DownloadActionResponse {
+   public func pause(path: String) async throws -> DownloadActionResponse {
       await ensureReconciled()
 
       guard let record = await store.findByPath(path) else {
-         throw DownloadError.notFound(path.path)
+         throw DownloadError.notFound(path)
       }
 
       guard record.status == .inProgress,
-            let task = await getDownloadTask(path.path) else {
+            let task = await getDownloadTask(path) else {
          return DownloadActionResponse(download: record.toItem(), expectedStatus: .paused)
       }
       
@@ -317,18 +317,18 @@ public final class DownloadManager: NSObject {
     - Parameter path: The download path.
     - Returns: The download operation.
     */
-   public func cancel(path: URL) async throws -> DownloadActionResponse {
+   public func cancel(path: String) async throws -> DownloadActionResponse {
       await ensureReconciled()
 
       guard var record = await store.findByPath(path) else {
-         throw DownloadError.notFound(path.path)
+         throw DownloadError.notFound(path)
       }
 
       guard record.status == .idle || record.status == .inProgress || record.status == .paused else {
          return DownloadActionResponse(download: record.toItem(), expectedStatus: .canceled)
       }
       
-      if let task = await getDownloadTask(path.path) {
+      if let task = await getDownloadTask(path) {
          task.cancel()
       }
       
@@ -413,10 +413,10 @@ public final class DownloadManager: NSObject {
       }
 
       do {
-         try DownloadManager.placeDownloadedFile(from: location, to: record.path)
+         try DownloadManager.placeDownloadedFile(from: location, to: record.fileURL)
       } catch {
          os_log(.error, log: Log.downloadManager, "Failed to place %{public}@: %{public}@",
-                record.path.lastPathComponent, error.localizedDescription)
+                record.fileURL.lastPathComponent, error.localizedDescription)
 
          // No record names this temp file, so it is removed here or never — and a
          // record left InProgress with no task behind it would never emit again.
@@ -433,7 +433,7 @@ public final class DownloadManager: NSObject {
       // resume offset, so this agrees with them; it is here because the file on
       // disk is the authority on what was actually written, and the last progress
       // callback may have been throttled away before completion.
-      let receivedBytes = DownloadManager.fileSize(at: record.path) ?? record.receivedBytes
+      let receivedBytes = DownloadManager.fileSize(at: record.fileURL) ?? record.receivedBytes
 
       record.setBytes(received: receivedBytes, total: record.totalBytes)
       record.setStatus(.completed)
@@ -595,14 +595,14 @@ public final class DownloadManager: NSObject {
       for record in await store.list() {
          guard let updated = DownloadManager.reconciledRecord(
             record,
-            hasLiveTask: livePaths.contains(record.path.path)
+            hasLiveTask: livePaths.contains(record.path)
          ) else {
             continue
          }
 
          reconciled.append(updated)
          os_log(.info, log: Log.downloadManager, "Reconciled %{public}@ to %{public}@",
-                record.path.lastPathComponent, String(describing: updated.status))
+                record.fileURL.lastPathComponent, String(describing: updated.status))
       }
 
       await store.update(reconciled)
@@ -629,7 +629,7 @@ public final class DownloadManager: NSObject {
    /// or nil when no record has that path. One await, so the read and the write cannot
    /// be interleaved; see DownloadStore.mutate().
    private func mutateRecord(
-      path: URL,
+      path: String,
       persist: Bool = true,
       _ body: @Sendable (inout DownloadRecord) -> Void
    ) async -> DownloadRecord? {

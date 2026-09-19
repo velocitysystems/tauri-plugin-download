@@ -15,12 +15,6 @@ class URIParserTest {
    }
 
    @Test
-   fun `valid file URL`() {
-      assertEquals("/downloads/file.mp4", parsePath("file:///downloads/file.mp4"))
-      assertEquals("/file.txt", parsePath("file:///file.txt"))
-   }
-
-   @Test
    fun `empty path throws`() {
       assertThrows(IllegalArgumentException::class.java) {
          parsePath("")
@@ -38,9 +32,18 @@ class URIParserTest {
    }
 
    @Test
-   fun `path traversal is resolved`() {
-      assertEquals("/downloads/file.txt", parsePath("/downloads/subdir/../file.txt"))
-      assertEquals("/file.txt", parsePath("/a/b/../../file.txt"))
+   fun `path is returned as given`() {
+      // Resolving `..`, `//` or a symlink would hand back a different string from the
+      // one JS keys its listeners by.
+      assertEquals("/downloads/subdir/../file.txt", parsePath("/downloads/subdir/../file.txt"))
+      assertEquals("/downloads//file.txt", parsePath("/downloads//file.txt"))
+   }
+
+   @Test
+   fun `file URL throws`() {
+      assertThrows(IllegalArgumentException::class.java) {
+         parsePath("file:///file.txt")
+      }
    }
 
    @Test
@@ -50,7 +53,14 @@ class URIParserTest {
       }
    }
 
-   // -- parseURI tests --
+   @Test
+   fun `path ending in a parent segment throws`() {
+      // Mirrors Rust's `Path::file_name()`, which returns `None` only when the path
+      // terminates in `..` — an occurrence earlier in the path does not count.
+      assertThrows(IllegalArgumentException::class.java) {
+         parsePath("/a/b/..")
+      }
+   }
 
    @Test
    fun `valid URLs`() {

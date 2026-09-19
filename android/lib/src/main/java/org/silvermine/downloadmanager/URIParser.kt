@@ -1,43 +1,37 @@
 package org.silvermine.downloadmanager
 
-import java.io.File
 import java.net.URI
 
 /**
  * Parses and validates a download path string.
  * Checks that the path is not empty, is an absolute path and contains a filename.
+ * Returns it unchanged, as it is the download's identity.
  */
 fun parsePath(pathString: String): String {
    if (pathString.isEmpty()) {
       throw IllegalArgumentException("Path cannot be empty")
    }
 
-   val path: String
-   if (pathString.startsWith("file://")) {
-      val uri = try {
-         URI(pathString)
-      } catch (e: Exception) {
-         throw IllegalArgumentException("Invalid file URL: $pathString")
-      }
-      if (uri.scheme != "file") {
-         throw IllegalArgumentException("Invalid file URL: $pathString")
-      }
-      path = uri.path ?: throw IllegalArgumentException("Invalid file URL: $pathString")
-   } else if (pathString.startsWith("/")) {
-      path = pathString
-   } else {
+   if (!pathString.startsWith("/")) {
       throw IllegalArgumentException("Path must be absolute")
    }
 
-   // Resolve path traversal sequences (e.g., /../) to a canonical form.
-   val canonicalPath = File(path).canonicalPath
-
-   val filename = canonicalPath.substringAfterLast("/")
-   if (filename.isEmpty()) {
+   if (fileName(pathString) == null) {
       throw IllegalArgumentException("Path must have a filename")
    }
 
-   return canonicalPath
+   return pathString
+}
+
+/**
+ * The path's last component, or `null` for "/" or a trailing "..", as Rust's
+ * `Path::file_name()` does. A string check: nothing is resolved.
+ */
+private fun fileName(path: String): String? {
+   val components = path.split("/").filter { it.isNotEmpty() && it != "." }
+   val last = components.lastOrNull() ?: return null
+
+   return if (last == "..") null else last
 }
 
 /**
