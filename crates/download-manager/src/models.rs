@@ -112,6 +112,14 @@ impl DownloadRecord {
       }
    }
 
+   /// Builds the public payload, computing `progress` from the byte counts.
+   ///
+   /// A completed download always reports 100%, even without a content length.
+   /// In flight without one it reports 0%, since `received_bytes` is then the
+   /// only meaningful signal.
+   ///
+   /// The clamp bounds the ratio; it does not assert the counts agree. Both
+   /// reach the frontend unchanged, so read them for exact bytes.
    pub fn to_item(&self) -> DownloadItem {
       let progress = match (&self.status, self.total_bytes) {
          (DownloadStatus::Completed, _) => 100.0,
