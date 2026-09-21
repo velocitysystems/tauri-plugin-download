@@ -115,12 +115,15 @@ impl SetupConfig {
    ///
    /// Every path the webview passes to `create`, `start` or `resume` must name a
    /// location inside one of them, once `.` and `..` are resolved. Each must be
-   /// absolute, and on mobile inside the app sandbox. Several rather than one
+   /// absolute and not a filesystem root, and on mobile inside the app sandbox,
+   /// which only `app.path()` can name. Several rather than one
    /// because destinations need not share a root, as `Documents` and `Library` do
    /// not on iOS.
    ///
-   /// At least one is required. Keep them clear of [`store_dir`](Self::store_dir): a
-   /// download written there can overwrite `downloads.json`.
+   /// At least one is required. None may admit the store file, as a download named
+   /// `downloads.json` would overwrite it: a directory that is, or contains,
+   /// [`store_dir`](Self::store_dir), or that names the store file itself, fails
+   /// plugin initialization. A `store_dir` above them all is fine.
    pub fn download_dirs<I, P>(&mut self, dirs: I) -> &mut Self
    where
       I: IntoIterator<Item = P>,
@@ -265,7 +268,7 @@ impl<R: Runtime> Builder<R> {
 
             download_manager::validate_store_dir(&store_dir)?;
 
-            app.manage(scope::DownloadScope::new(download_dirs)?);
+            app.manage(scope::DownloadScope::new(download_dirs, &store_dir)?);
 
             #[cfg(desktop)]
             {
@@ -537,7 +540,7 @@ mod tests {
       let expected = store_dir.join("downloads.json");
 
       let configured = store_dir.clone();
-      let downloads = dir.path().to_path_buf();
+      let downloads = dir.path().join("downloads");
       let app = tauri::test::mock_builder()
          .plugin(
             Builder::new()
@@ -554,7 +557,7 @@ mod tests {
       let download: DownloadItem = app
          .download()
          .create(
-            dir.path().join("file.mp4").to_str().unwrap(),
+            dir.path().join("downloads/file.mp4").to_str().unwrap(),
             "https://example.com/file.mp4",
          )
          .unwrap()
