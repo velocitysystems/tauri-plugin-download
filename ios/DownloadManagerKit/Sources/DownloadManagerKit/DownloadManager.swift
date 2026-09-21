@@ -320,9 +320,7 @@ public final class DownloadManager: NSObject {
          return DownloadActionResponse(download: record.toItem(), expectedStatus: .canceled)
       }
       
-      if let task = await getDownloadTask(path) {
-         task.cancel()
-      }
+      let task = await getDownloadTask(path)
       
       if let _ = loadResumeData(for: record) {
          deleteResumeData(for: record)
@@ -331,6 +329,11 @@ public final class DownloadManager: NSObject {
       
       record.setStatus(.canceled)
       await store.remove(record)
+
+      // Only once the record is gone: the task's own cancel callback would otherwise
+      // find it still inProgress and revert it.
+      task?.cancel()
+
       let item = await emitChanged(record)
       
       return DownloadActionResponse(download: item)
@@ -414,9 +417,10 @@ public final class DownloadManager: NSObject {
          // record left InProgress with no task behind it would never emit again.
          try? FileManager.default.removeItem(at: location)
 
-         record.setStatus(.canceled)
-         await store.remove(record)
-         await emitChanged(record)
+         // Reverted, not cancelled, so the caller can fix the destination and try
+         // again. Desktop keeps its temp file and reaches Paused; the session's file
+         // is transient here, so this reverts to Idle.
+         await revertFailedRecord(path: record.path)
 
          return
       }
@@ -482,12 +486,13 @@ public final class DownloadManager: NSObject {
          return
       }
       
-      // Download failed - update status and clean up
-      deleteResumeData(for: record)
-      if let updated = await mutateRecord(path: record.path, { $0.setStatus(.canceled) }) {
-         await store.remove(updated)
-         await emitChanged(updated)
-      }
+      // Reverted rather than cancelled: Canceled is what cancel() emits. The record's
+      // resumeDataPath is left alone — this branch only runs when the error carried no
+      // resume data, so it is all revertFailedRecord() has to choose Paused over Idle.
+      os_log(.error, log: Log.downloadManager, "Download failed for %{public}@: %{public}@",
+             record.fileURL.lastPathComponent, error.localizedDescription)
+
+      await revertFailedRecord(path: record.path)
    }
    
    /**
@@ -503,6 +508,27 @@ public final class DownloadManager: NSObject {
 
    private func ensureReconciled() async {
       await reconcileTask?.value
+   }
+
+   /// Reverts a record whose transfer failed, leaving the caller something to retry.
+   ///
+   /// [reconciledRecord] decides the status, so a failure and a process death leave
+   /// the same record behind, and one that is no longer `inProgress` — a pause or a
+   /// cancel that landed first — is left alone. The mutation's own call is the
+   /// authoritative one; the read before it only avoids a no-op emission.
+   private func revertFailedRecord(path: String) async {
+      func reverted(_ record: DownloadRecord) -> DownloadRecord? {
+         return DownloadManager.reconciledRecord(record, hasLiveTask: false)
+      }
+
+      guard let current = await store.findByPath(path), reverted(current) != nil,
+            let updated = await mutateRecord(path: path, { record in
+               if let next = reverted(record) { record = next }
+            }) else {
+         return
+      }
+
+      await emitChanged(updated)
    }
 
    /// Builds the request a download's task runs on, applying the record's network

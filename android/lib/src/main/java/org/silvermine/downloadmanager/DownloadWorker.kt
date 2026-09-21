@@ -99,16 +99,16 @@ internal class DownloadWorker(
                   if (tempFile.exists()) tempFile.delete()
                   downloadedSize = 0L
                } else {
-                  return handleError(manager, store, path, tempFile, "HTTP ${response.code}: ${response.message}")
+                  return handleError(manager, store, path, "HTTP ${response.code}: ${response.message}")
                }
             }
 
             if (!response.isSuccessful && response.code != 206) {
-               return handleError(manager, store, path, tempFile, "HTTP ${response.code}: ${response.message}")
+               return handleError(manager, store, path, "HTTP ${response.code}: ${response.message}")
             }
 
             val body = response.body
-               ?: return handleError(manager, store, path, tempFile, "Empty response body")
+               ?: return handleError(manager, store, path, "Empty response body")
 
             // Get the total size of the file from headers (if available).
             // OkHttp reports -1 when unknown, which stays null rather than
@@ -248,21 +248,19 @@ internal class DownloadWorker(
          // Error handling is deferred outside the synchronized block to avoid
          // reentrant lock acquisition (handleError also synchronizes on manager).
          if (renameFailed) {
-            return handleError(manager, store, path, tempFile, "Failed to move download to $path")
+            return handleError(manager, store, path, "Failed to move download to $path")
          }
 
          dismissNotification()
          return Result.success()
       } catch (e: Exception) {
-         // Transient failures (network drops mid-download) preserve the temp file
-         // and transition to Paused so the download can be resumed later. This
-         // mirrors iOS behavior where URLSession saves resume data for transient
-         // errors. Permanent failures (DNS, TLS) delete the temp file and cancel.
+         // Transient failures retry, resuming through a Range header; permanent ones
+         // give up now. Neither deletes the partial or drops the record.
          val isTransientFailure = e is IOException && isTransient(e)
          return if (isTransientFailure) {
             handleTransientError(manager, store, path, e.message ?: "Unknown error")
          } else {
-            handleError(manager, store, path, tempFile, e.message ?: "Unknown error")
+            handleError(manager, store, path, e.message ?: "Unknown error")
          }
       }
    }
@@ -294,22 +292,17 @@ internal class DownloadWorker(
 
    /**
     * Handles permanent failures (HTTP errors, rename failures, DNS/TLS errors).
-    * Deletes the temp file, cancels the download, and removes it from the store.
+    *
+    * Reverts to Paused or Idle and leaves the temp file, as desktop does: Canceled
+    * is what cancel() emits, and a failed download is still one the caller may
+    * resume. Differs from [handleTransientError] only in giving up immediately.
     */
-   private fun handleError(manager: DownloadManager, store: DownloadStore, path: String, tempFile: File, message: String): Result {
+   private fun handleError(manager: DownloadManager, store: DownloadStore, path: String, message: String): Result {
       Log.e(TAG, "Download failed (permanent) for $path: $message")
 
-      // Synchronized on manager to prevent interleaving with cancel/pause.
-      synchronized(manager) {
-         if (tempFile.exists()) tempFile.delete()
-         store.findByPath(path)?.let { record ->
-            val canceled = record.withStatus(DownloadStatus.Canceled)
-            store.remove(record)
-            manager.emitChanged(canceled)
-         }
-      }
-
+      revertInProgressRecord(manager, store, path)
       dismissNotification()
+
       return Result.failure()
    }
 

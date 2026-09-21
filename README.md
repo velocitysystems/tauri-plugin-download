@@ -353,8 +353,8 @@ before the connection drops — the two race — the retry moves it back to `InP
 record merely waiting, on the unmetered constraint or in a retry backoff, stays
 `InProgress` with no worker running; restart the app then and the plugin reconciles it to
 `Paused`, or `Idle` at zero bytes when no partial file survives, before the pending work
-moves it back. Reconciliation emits no event, so the stale value arrives through the next
-`get()` or `list()`.
+moves it back. Reconciliation on mobile emits no event, so the stale value arrives
+through the next `get()` or `list()`; desktop emits one.
 
 So treat `Paused` and `Idle` as "not currently transferring" rather than "waiting for the
 user", and drive recovery off events. No bytes are lost either way. Constraint holds are
@@ -371,6 +371,45 @@ The network policy is fixed when the download is first created. Every download s
 exposes its resolved policy through `download.options.allowMetered`. Calling `create()`
 again for an existing path returns the existing record without changing its URL or
 options.
+
+#### When a download fails
+
+A download that fails is never reported as `Canceled`. `Canceled` means `cancel()` was
+called. A failure reverts the download instead, so the record survives and you decide
+what happens next:
+
+| After a failure | Status | What to call |
+| --- | --- | --- |
+| Something survives to resume from | `Paused` | `resume()` — the transfer continues from the bytes already held |
+| Nothing does | `Idle`, at zero bytes | `start()` — the transfer begins again |
+
+This covers an HTTP error status, a DNS failure, a TLS failure, a timeout that ran out
+of retries, and a destination that could not be written. On no platform is the record
+dropped, and only iOS loses a partial download, as described below.
+
+What survives to resume from is the one place the platforms differ, because what they
+hold between attempts is not the same thing:
+
+| Platform | Held between attempts |
+| --- | --- |
+| Desktop, Android | The partial file on disk, so any failure after the first bytes land leaves `Paused` |
+| iOS | `URLSession` resume data, which the system produces for some failures and not others |
+
+So the difference shows on iOS only: a failure the system produced no resume data for
+reverts to `Idle` and restarts from zero. An HTTP error status, including one answering
+`resume()`, and a destination that could not be written always do, because the file
+`URLSession` hands over is deleted as soon as the callback returns — desktop and Android
+keep their temp file through both and revert to `Paused`.
+
+No event carries the reason a download failed; the status change is all you get.
+Failures are logged on every platform, so telling a 404 from a lost connection means
+reading the platform log.
+
+> A `Paused` record's `receivedBytes` is the last value a progress event reported, not a
+> fresh measurement, and progress is emitted on whole-percent changes — so a download
+> paused early can read `0`. Desktop and Android re-measure the partial file when they
+> revert a download, but iOS cannot: resume data is an opaque blob with no documented
+> size. The value corrects itself on the first event after `resume()`.
 
 #### Listen for progress notifications
 
