@@ -60,6 +60,13 @@ public func parseURL(_ urlString: String) throws -> URL {
    guard let host = url.host, !host.isEmpty else {
       throw DownloadError.invalidURL("URL must have a host")
    }
-   
+
+   // Refused, not forwarded: credentials would be persisted in the store and logged
+   // with every progress line. After the host, so all three platforms agree on which
+   // error a URL failing both gets.
+   guard url.user == nil, url.password == nil else {
+      throw DownloadError.invalidURL("URL must not contain credentials")
+   }
+
    return url
 }

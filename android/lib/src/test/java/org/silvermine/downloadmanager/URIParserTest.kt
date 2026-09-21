@@ -126,6 +126,10 @@ class URIParserTest {
          "URL Error: Invalid URL scheme 'ftp': must be http or https",
          message("ftp://example.com/file.mp4")
       )
+      assertEquals(
+         "URL Error: URL must not contain credentials",
+         message("https://user:pass@example.com/file.mp4")
+      )
    }
 
    @Test

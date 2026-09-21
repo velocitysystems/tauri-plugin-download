@@ -241,6 +241,13 @@ Key behaviors:
      not caught
    * The bound is lexical, so a symbolic link inside a download directory that points
      outside it is not resolved
+   * A download URL must be `http` or `https`, must have a host, and must not carry
+     credentials: `https://user:pass@host/file` is rejected on every platform, since
+     the store and the logs would both keep them
+   * Each platform parses URLs with its own library, so the accepted set is not
+     identical — Android's `java.net.URI` refuses unencoded spaces and underscored
+     hosts, and iOS before 17 refuses unencoded spaces too; desktop accepts both.
+     Percent-encode anything unusual
 
 ### API
 

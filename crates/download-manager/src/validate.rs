@@ -80,6 +80,13 @@ pub fn url(url: &str) -> crate::Result<()> {
       return Err(Error::Url("URL must have a host".to_string()));
    }
 
+   // Refused, not forwarded: credentials would be persisted in the store and logged
+   // with every progress line. After the host, so all three platforms agree on which
+   // error a URL failing both gets.
+   if !parsed.username().is_empty() || parsed.password().is_some() {
+      return Err(Error::Url("URL must not contain credentials".to_string()));
+   }
+
    Ok(())
 }
 
@@ -215,6 +222,14 @@ mod tests {
    }
 
    #[test]
+   fn test_url_with_credentials() {
+      assert!(url("https://user:pass@example.com/file.mp4").is_err());
+      assert!(url("https://user@example.com/file.mp4").is_err());
+      // A password with no username is still credentials.
+      assert!(url("https://:pass@example.com/file.mp4").is_err());
+   }
+
+   #[test]
    fn test_invalid_url_format() {
       assert!(url("not a valid url").is_err());
       // Protocol-relative URL with no scheme.
@@ -238,6 +253,10 @@ mod tests {
       assert_eq!(
          message("ftp://example.com/file.mp4"),
          "URL Error: Invalid URL scheme 'ftp': must be http or https"
+      );
+      assert_eq!(
+         message("https://user:pass@example.com/file.mp4"),
+         "URL Error: URL must not contain credentials"
       );
    }
 
