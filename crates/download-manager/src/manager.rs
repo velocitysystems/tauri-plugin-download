@@ -83,7 +83,7 @@ impl DownloadManager {
       config: DownloadManagerConfig,
       connection_status: ConnectionStatusProvider,
    ) -> Self {
-      let store = DownloadStore::new(data_dir.join("downloads.json"));
+      let store = DownloadStore::new(data_dir.join(crate::STORE_FILE_NAME));
       if let Err(e) = store.load() {
          warn!("Failed to load download store: {}", e);
       }

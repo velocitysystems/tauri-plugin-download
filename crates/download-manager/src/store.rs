@@ -11,6 +11,12 @@ use crate::models::{DownloadRecord, DownloadStatus};
 
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
+/// The file the store keeps inside the configured store directory.
+///
+/// Named here rather than at each use so the scope that has to keep the file out of
+/// reach cannot drift from the manager that writes it.
+pub const STORE_FILE_NAME: &str = "downloads.json";
+
 /// Private on-disk format. Record types and migrations are introduced only when
 /// a future schema needs them; v1 uses the current persisted record unchanged.
 #[derive(Serialize, Deserialize)]

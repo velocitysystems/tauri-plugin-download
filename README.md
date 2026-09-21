@@ -120,21 +120,28 @@ npm install @silvermine/tauri-plugin-download
 
 ### Prerequisites
 
-Initialize the plugin in your `tauri::Builder`:
+Initialize the plugin in your `tauri::Builder`, naming the directories it needs:
 
 ```rust
+use tauri::Manager;
+
 fn main() {
    tauri::Builder::default()
-      .plugin(tauri_plugin_download::init())
+      .plugin(
+         tauri_plugin_download::Builder::new()
+            .on_setup(|app, config| {
+               config.store_dir(app.path().app_data_dir()?.join("store"));
+               config.download_dirs([app.path().app_data_dir()?.join("downloads")]);
+               Ok(())
+            })
+            .build(),
+      )
       .run(tauri::generate_context!())
       .expect("error while running tauri application");
 }
 ```
 
 ### Configuration
-
-Use `Builder` instead of `init()` to configure the plugin. `init()` is shorthand for
-`Builder::new().build()`.
 
 #### Builder options
 
@@ -149,7 +156,8 @@ Set inside `on_setup`, which runs once the app exists and `app.path()` is availa
 
 | Method | Type | Default | Description |
 | --- | --- | --- | --- |
-| `store_dir` | `impl Into<PathBuf>` | Platform-specific | Directory holding `downloads.json` |
+| `store_dir` | `impl Into<PathBuf>` | Required | Directory holding `downloads.json` |
+| `download_dirs` | `IntoIterator<Item = impl Into<PathBuf>>` | Required | Directories a download may be written to |
 
 Full example:
 
@@ -162,7 +170,8 @@ fn main() {
          tauri_plugin_download::Builder::new()
             .user_agent("my-app/1.0")
             .on_setup(|app, config| {
-               config.store_dir(app.path().app_data_dir()?.join("downloads"));
+               config.store_dir(app.path().app_data_dir()?.join("store"));
+               config.download_dirs([app.path().app_data_dir()?.join("downloads")]);
                Ok(())
             })
             .build(),
@@ -174,19 +183,31 @@ fn main() {
 
 #### Platform defaults
 
-Both settings are opt-in. Left unset, each platform keeps its own:
+`user_agent` is opt-in. Left unset, each platform keeps its own:
 
-| Platform | Store location | User agent |
-| --- | --- | --- |
-| Desktop | `app_data_dir()/downloads.json` | none |
-| Android | `filesDir/downloads.json` | `okhttp/<version>` |
-| iOS | `Application Support/downloads.json` | `<app>/<version> CFNetwork/… Darwin/…` |
+| Platform | User agent |
+| --- | --- |
+| Desktop | none |
+| Android | `okhttp/<version>` |
+| iOS | `<app>/<version> CFNetwork/… Darwin/…` |
+
+`store_dir` and `download_dirs` have no default and no fallback. An app that names
+neither, or only one, fails plugin initialization rather than starting with a
+directory it never chose.
+
+Every path `create`, `start` and `resume` receive must name a location inside one of
+the `download_dirs`, once `.` and `..` in it are resolved. A path outside all of them
+is rejected before it reaches any platform, with
+`Path Error: path must be inside a download directory`. A download path is chosen by
+the webview, so leaving it unbounded would let a compromised frontend write a file
+anywhere the app can write. Several directories rather than one because destinations
+need not share a root: on iOS the sandbox separates `Documents` from `Library`, so an
+app keeping content in both has no ancestor to name short of the container.
 
 Key behaviors:
 
-   * **The store is not migrated.** Changing `store_dir`, or adopting it for the first
-     time, leaves any old records where they are, invisible to the plugin — treat it as
-     discarding the download history
+   * **The store is not migrated.** Changing `store_dir` leaves any old records where
+     they are, invisible to the plugin — treat it as discarding the download history
    * `store_dir` must be absolute, and on mobile inside the app sandbox; a relative path
      fails plugin initialization
    * **Keep `store_dir` on internal storage on Android.** The store lists every
@@ -204,7 +225,22 @@ Key behaviors:
    * A download resumed after a relaunch uses the new run's user agent on desktop and
      Android; iOS keeps the value the download started with when it resumes from resume
      data
-
+   * A download directory admits everything beneath it at any depth, and the parent of
+     a download is created on its first write
+   * `get`, `pause` and `cancel` are not bounded — none of them writes to disk, and
+     each only reaches a record `create` already admitted
+   * Every download directory must be absolute and below the filesystem root — a
+     root would admit every path, leaving the plugin configured but bounding nothing
+   * One bad directory fails plugin initialization rather than being dropped, so an
+     app is never bounded by fewer directories than it named
+   * No download directory may admit the store file — a download named
+     `downloads.json` would overwrite the store. A directory that is or contains
+     `store_dir`, or names the store file itself, fails plugin initialization; a
+     `store_dir` above them is fine. The comparison is lexical, so a `store_dir`
+     reaching a download directory by symbolic link or a different spelling is
+     not caught
+   * The bound is lexical, so a symbolic link inside a download directory that points
+     outside it is not resolved
 
 ### API
 
