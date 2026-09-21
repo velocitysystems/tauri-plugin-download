@@ -466,6 +466,12 @@ await download.listen((updated) => {
 }, { autoUnlisten: true });
 ```
 
+A failure is not a terminal state, so `autoUnlisten` does not fire on one: the
+download reverts to `Paused` or `Idle` and the listener stays attached, which is what
+lets you watch the retry. Call `unlisten()` yourself, or `cancel()` the download, to
+release a listener on something you have given up on. See
+[When a download fails](#when-a-download-fails).
+
 ### Examples
 
 Check out the [examples/tauri-app](examples/tauri-app) directory for a working example of
