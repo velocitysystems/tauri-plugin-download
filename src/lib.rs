@@ -104,8 +104,8 @@ impl SetupConfig {
    /// Must be absolute, and on mobile inside the app sandbox — which only
    /// `app.path()` can name, and the reason this is a hook rather than a setter.
    ///
-   /// Unset, each platform keeps its own default. Changing it leaves existing records
-   /// where they are, invisible to the plugin.
+   /// Required. Changing it leaves existing records where they are, invisible to the
+   /// plugin.
    pub fn store_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
       self.store_dir = Some(dir.into());
       self
@@ -244,34 +244,35 @@ impl<R: Runtime> Builder<R> {
                download_manager::validate_user_agent(user_agent)?;
             }
 
-            if let Some(ref store_dir) = config.store_dir {
-               download_manager::validate_store_dir(store_dir)?;
-            }
+            // Both required, with no default: a directory the app did not choose is
+            // not one it agreed to write into. Reported together, so one launch names
+            // every missing setting rather than one per rebuild.
+            let (store_dir, download_dirs) = match (config.store_dir, config.download_dirs) {
+               (Some(store_dir), dirs) if !dirs.is_empty() => (store_dir, dirs),
+               (store_dir, dirs) => {
+                  let mut missing = Vec::new();
 
-            // No default: a directory the app did not choose is not one it agreed to
-            // write into, and a relative fallback admits nothing.
-            if config.download_dirs.is_empty() {
-               return Err("Set `download_dirs` in `on_setup`".into());
-            }
+                  if store_dir.is_none() {
+                     missing.push("`store_dir`");
+                  }
+                  if dirs.is_empty() {
+                     missing.push("`download_dirs`");
+                  }
 
-            app.manage(scope::DownloadScope::new(config.download_dirs)?);
+                  return Err(format!("Set {} in `on_setup`", missing.join(" and ")).into());
+               }
+            };
+
+            download_manager::validate_store_dir(&store_dir)?;
+
+            app.manage(scope::DownloadScope::new(download_dirs)?);
 
             #[cfg(desktop)]
             {
-               // A configured store directory is used as given. Only the default is
-               // resolved — and only it falls back, since a caller who named a
-               // directory should not silently get a different one.
-               let data_dir = config.store_dir.unwrap_or_else(|| {
-                  app.path().app_data_dir().unwrap_or_else(|e| {
-                     warn!("Failed to resolve app data dir, falling back to '.': {}", e);
-                     std::path::PathBuf::from(".")
-                  })
-               });
-
                // Wire Tauri event emission as the on_changed callback.
                let app_handle = app.app_handle().clone();
                let manager = DownloadManager::new(
-                  data_dir,
+                  store_dir,
                   std::sync::Arc::new(move |item| {
                      if let Err(e) = app_handle.emit("tauri-plugin-download:changed", &item) {
                         warn!("Failed to emit change event: {}", e);
@@ -287,17 +288,13 @@ impl<R: Runtime> Builder<R> {
                // The bridge to native is JSON, so the directory has to be UTF-8. A path
                // that is not fails here rather than being dropped, which would leave the
                // store at the platform default with nothing having failed.
-               let store_dir = match config.store_dir {
-                  Some(dir) => Some(
-                     dir.to_str()
-                        .ok_or_else(|| format!("Store directory is not valid UTF-8: {:?}", dir))?
-                        .to_string(),
-                  ),
-                  None => None,
-               };
+               let store_dir = store_dir
+                  .to_str()
+                  .ok_or_else(|| format!("Store directory is not valid UTF-8: {:?}", store_dir))?
+                  .to_string();
 
                // Mobile download management is handled natively by the platform plugin.
-               let download = mobile::init(app, _api, user_agent, store_dir)?;
+               let download = mobile::init(app, _api, user_agent, Some(store_dir))?;
                app.manage(download);
             }
 
@@ -318,11 +315,12 @@ impl<R: Runtime> Builder<R> {
 mod tests {
    use super::*;
 
-   /// A builder with the required download directory set, for the cases that are
-   /// about something else. A test needing its own hook sets it itself, since
-   /// `on_setup` holds one closure.
+   /// A builder with both required directories set, for the cases that are about
+   /// something else. A test needing its own hook sets both itself, since `on_setup`
+   /// holds one closure.
    fn configured() -> Builder<tauri::test::MockRuntime> {
       Builder::new().on_setup(|app, config| {
+         config.store_dir(app.path().app_data_dir()?.join("store"));
          config.download_dirs([app.path().app_data_dir()?.join("downloads")]);
          Ok(())
       })
@@ -385,6 +383,7 @@ mod tests {
             Builder::new()
                .on_setup(move |app, config| {
                   flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                  config.store_dir(app.path().app_data_dir()?.join("store"));
                   config.download_dirs([app.path().app_data_dir()?.join("downloads")]);
                   Ok(())
                })
@@ -403,7 +402,8 @@ mod tests {
       let app = tauri::test::mock_builder()
          .plugin(
             Builder::new()
-               .on_setup(|_app, config| {
+               .on_setup(|app, config| {
+                  config.store_dir(app.path().app_data_dir()?.join("store"));
                   config.download_dirs(["downloads"]);
                   Ok(())
                })
@@ -422,7 +422,8 @@ mod tests {
       let app = tauri::test::mock_builder()
          .plugin(
             Builder::new()
-               .on_setup(|_app, config| {
+               .on_setup(|app, config| {
+                  config.store_dir(app.path().app_data_dir()?.join("store"));
                   config.download_dirs(["/data/downloads", "/media/library"]);
                   Ok(())
                })
@@ -440,8 +441,44 @@ mod tests {
    }
 
    #[test]
-   fn test_a_missing_download_dir_names_the_setting() {
-      // The plain `Builder::new().build()` case, which used to start on a default.
+   fn test_a_missing_store_dir_fails_plugin_initialization() {
+      // Neither directory has a default. Without this, an app that named only one
+      // would start with the other resolved to somewhere it never chose.
+      let app = tauri::test::mock_builder()
+         .plugin(
+            Builder::new()
+               .on_setup(|app, config| {
+                  config.download_dirs([app.path().app_data_dir()?.join("downloads")]);
+                  Ok(())
+               })
+               .build(),
+         )
+         .build(tauri::test::mock_context(tauri::test::noop_assets()));
+
+      assert!(matches!(app, Err(tauri::Error::PluginInitialization(_, _))));
+   }
+
+   #[test]
+   fn test_a_missing_download_dir_fails_plugin_initialization() {
+      let app = tauri::test::mock_builder()
+         .plugin(
+            Builder::new()
+               .on_setup(|app, config| {
+                  config.store_dir(app.path().app_data_dir()?.join("store"));
+                  Ok(())
+               })
+               .build(),
+         )
+         .build(tauri::test::mock_context(tauri::test::noop_assets()));
+
+      assert!(matches!(app, Err(tauri::Error::PluginInitialization(_, _))));
+   }
+
+   #[test]
+   fn test_neither_directory_set_names_both_in_one_error() {
+      // The plain `Builder::new().build()` case, which used to start on defaults.
+      // Both are named at once, so configuring the plugin takes one launch rather
+      // than one per missing setting.
       let app = tauri::test::mock_builder()
          .plugin(Builder::new().build())
          .build(tauri::test::mock_context(tauri::test::noop_assets()));
@@ -449,7 +486,7 @@ mod tests {
       let error = app.unwrap_err().to_string();
 
       assert!(
-         error.contains("Set `download_dirs` in `on_setup`"),
+         error.contains("Set `store_dir` and `download_dirs` in `on_setup`"),
          "unexpected error: {}",
          error
       );

@@ -120,8 +120,7 @@ npm install @silvermine/tauri-plugin-download
 
 ### Prerequisites
 
-Initialize the plugin in your `tauri::Builder`, naming the directories downloads are
-written to:
+Initialize the plugin in your `tauri::Builder`, naming the directories it needs:
 
 ```rust
 use tauri::Manager;
@@ -157,7 +156,7 @@ Set inside `on_setup`, which runs once the app exists and `app.path()` is availa
 
 | Method | Type | Default | Description |
 | --- | --- | --- | --- |
-| `store_dir` | `impl Into<PathBuf>` | Platform-specific | Directory holding `downloads.json` |
+| `store_dir` | `impl Into<PathBuf>` | Required | Directory holding `downloads.json` |
 | `download_dirs` | `IntoIterator<Item = impl Into<PathBuf>>` | Required | Directories a download may be written to |
 
 Full example:
@@ -184,16 +183,17 @@ fn main() {
 
 #### Platform defaults
 
-`user_agent` and `store_dir` are opt-in. Left unset, each platform keeps its own:
+`user_agent` is opt-in. Left unset, each platform keeps its own:
 
-| Platform | Store location | User agent |
-| --- | --- | --- |
-| Desktop | `app_data_dir()/downloads.json` | none |
-| Android | `filesDir/downloads.json` | `okhttp/<version>` |
-| iOS | `Application Support/downloads.json` | `<app>/<version> CFNetwork/… Darwin/…` |
+| Platform | User agent |
+| --- | --- |
+| Desktop | none |
+| Android | `okhttp/<version>` |
+| iOS | `<app>/<version> CFNetwork/… Darwin/…` |
 
-`download_dirs` has no default and no fallback: an app that does not name at least
-one directory fails plugin initialization.
+`store_dir` and `download_dirs` have no default and no fallback. An app that names
+neither, or only one, fails plugin initialization rather than starting with a
+directory it never chose.
 
 Every path `create`, `start` and `resume` receive must name a location inside one of
 the `download_dirs`, once `.` and `..` in it are resolved. A path outside all of them
@@ -206,9 +206,8 @@ app keeping content in both has no ancestor to name short of the container.
 
 Key behaviors:
 
-   * **The store is not migrated.** Changing `store_dir`, or adopting it for the first
-     time, leaves any old records where they are, invisible to the plugin — treat it as
-     discarding the download history
+   * **The store is not migrated.** Changing `store_dir` leaves any old records where
+     they are, invisible to the plugin — treat it as discarding the download history
    * `store_dir` must be absolute, and on mobile inside the app sandbox; a relative path
      fails plugin initialization
    * **Keep `store_dir` on internal storage on Android.** The store lists every
