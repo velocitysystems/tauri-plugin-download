@@ -65,6 +65,31 @@ final class DownloadManagerTests: XCTestCase {
       }
    }
 
+   // MARK: - Response status
+
+   // URLSession reports a 4xx or 5xx as a finished download whose file is the error
+   // body, so the delegate reads the status before taking the file.
+
+   func testSuccessStatusesAreAccepted() {
+      XCTAssertTrue(DownloadSessionDelegate.isSuccessStatus(200))
+      // A resumed transfer, which is resume()'s normal path rather than an edge case.
+      XCTAssertTrue(DownloadSessionDelegate.isSuccessStatus(206))
+      XCTAssertTrue(DownloadSessionDelegate.isSuccessStatus(299))
+   }
+
+   func testFailureStatusesAreRejected() {
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(404))
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(500))
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(503))
+   }
+
+   func testRedirectAndInformationalStatusesAreRejected() {
+      // URLSession follows redirects itself, so a 3xx arriving here is not the
+      // resource. Also pins both bounds of the accepted range.
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(199))
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(304))
+   }
+
    // MARK: - Placing the downloaded file
 
    func testPlacingDownloadedFileCreatesMissingParentDirectory() throws {

@@ -494,6 +494,23 @@ public final class DownloadManager: NSObject {
 
       await revertFailedRecord(path: record.path)
    }
+
+   /**
+    Handler for a response whose HTTP status says the body is not the resource.
+    Called by DownloadSessionDelegate, which discards the file rather than placing it.
+
+    - Parameters:
+      - path: The download path, which is the task's description.
+      - statusCode: The response's HTTP status code.
+    */
+   func handleFailedResponse(path: String, statusCode: Int) async {
+      guard let record = await store.findByPath(path) else { return }
+
+      os_log(.error, log: Log.downloadManager, "Download failed for %{public}@: HTTP %{public}d",
+             record.fileURL.lastPathComponent, statusCode)
+
+      await revertFailedRecord(path: record.path)
+   }
    
    /**
     Handler for background session completion. Called by DownloadSessionDelegate.
