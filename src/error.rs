@@ -16,6 +16,9 @@ mod mobile_error {
 
       #[error(transparent)]
       PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
+
+      #[error(transparent)]
+      DownloadManager(#[from] download_manager::Error),
    }
 
    impl Serialize for Error {
