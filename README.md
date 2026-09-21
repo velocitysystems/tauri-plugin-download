@@ -418,6 +418,13 @@ No event carries the reason a download failed; the status change is all you get.
 Failures are logged on every platform, so telling a 404 from a lost connection means
 reading the platform log.
 
+Nothing marks a record as failed, so a failed download looks exactly like one you
+created and never started, or one you paused yourself. Nothing removes it either: the
+record and any partial file stay until you act. Call `cancel()` to discard a download
+you have given up on, which removes the record and deletes its partial file. Reporting
+when and why a download failed is tracked in
+[#25](https://github.com/silvermine/tauri-plugin-download/issues/25).
+
 > A `Paused` record's `receivedBytes` is the last value a progress event reported, not a
 > fresh measurement, and progress is emitted on whole-percent changes — so a download
 > paused early can read `0`. Desktop and Android re-measure the partial file when they
