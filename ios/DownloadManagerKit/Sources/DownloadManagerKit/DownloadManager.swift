@@ -353,7 +353,7 @@ public final class DownloadManager: NSObject {
             record.status == .inProgress else { return }
 
       let receivedBytes = UInt64(max(totalBytesWritten, 0))
-      let totalBytes: UInt64? = totalBytesExpectedToWrite > 0 ? UInt64(totalBytesExpectedToWrite) : nil
+      let totalBytes = DownloadManager.statedTotal(totalBytesExpectedToWrite)
 
       // Record a known total independently of the throttle below. handleFinished
       // reads the total back off the record, so a download that completes without
@@ -400,8 +400,10 @@ public final class DownloadManager: NSObject {
     - Parameters:
       - path: The download path, which is the task's description.
       - location: The temporary location of the downloaded file.
+      - expectedBytes: The response's stated length, or a negative value when it
+        stated none.
     */
-   func handleFinished(path: String, location: URL) async {
+   func handleFinished(path: String, location: URL, expectedBytes: Int64) async {
       guard var record = await store.findByPath(path) else {
          try? FileManager.default.removeItem(at: location)
          return
@@ -431,7 +433,11 @@ public final class DownloadManager: NSObject {
       // callback may have been throttled away before completion.
       let receivedBytes = DownloadManager.fileSize(at: record.fileURL) ?? record.receivedBytes
 
-      record.setBytes(received: receivedBytes, total: record.totalBytes)
+      // Falls back to the response's own figure: an empty body produces no progress
+      // callback, so nothing has recorded the header's total by now.
+      let totalBytes = record.totalBytes ?? DownloadManager.statedTotal(expectedBytes)
+
+      record.setBytes(received: receivedBytes, total: totalBytes)
       record.setStatus(.completed)
       await store.remove(record)
       await emitChanged(record)
@@ -684,6 +690,16 @@ public final class DownloadManager: NSObject {
       let item = record.toItem()
       await downloadContinuation.yield(item)
       return item
+   }
+
+   /// A response's stated length, or nil when it stated none.
+   ///
+   /// URLSession reports `NSURLSessionTransferSizeUnknown` (-1) for a body whose
+   /// length the server withheld, such as a chunked response. A stated zero is a
+   /// known total rather than an unknown one: an empty body is a complete download,
+   /// and collapsing it to nil disagreed with desktop, which reports 0.
+   static func statedTotal(_ expectedBytes: Int64) -> UInt64? {
+      return expectedBytes >= 0 ? UInt64(expectedBytes) : nil
    }
 
    static func fileSize(at url: URL) -> UInt64? {

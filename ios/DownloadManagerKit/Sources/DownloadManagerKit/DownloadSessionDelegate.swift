@@ -46,8 +46,12 @@ final class DownloadSessionDelegate: NSObject, URLSessionDownloadDelegate {
          return
       }
       
+      // An empty body produces no didWriteData callback at all, so the header's total
+      // has never been seen. Read it here instead of losing it.
+      let expectedBytes = downloadTask.response?.expectedContentLength ?? NSURLSessionTransferSizeUnknown
+
       Task {
-         await self.manager?.handleFinished(path: path, location: tempURL)
+         await self.manager?.handleFinished(path: path, location: tempURL, expectedBytes: expectedBytes)
       }
    }
    

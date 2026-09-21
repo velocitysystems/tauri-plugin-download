@@ -65,6 +65,23 @@ final class DownloadManagerTests: XCTestCase {
       }
    }
 
+   // MARK: - Stated total
+
+   func testUnstatedLengthHasNoTotal() {
+      // NSURLSessionTransferSizeUnknown, which a chunked response reports.
+      XCTAssertNil(DownloadManager.statedTotal(-1))
+   }
+
+   func testStatedZeroLengthIsAKnownTotal() {
+      // An empty body is a complete download, not one of unknown length. Desktop
+      // reports 0 for the same response, and collapsing it to nil disagreed.
+      XCTAssertEqual(DownloadManager.statedTotal(0), 0)
+   }
+
+   func testStatedLengthIsCarriedThrough() {
+      XCTAssertEqual(DownloadManager.statedTotal(1000), 1000)
+   }
+
    // MARK: - Response status
 
    // URLSession reports a 4xx or 5xx as a finished download whose file is the error

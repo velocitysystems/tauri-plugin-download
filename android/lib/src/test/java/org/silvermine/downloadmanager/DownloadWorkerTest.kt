@@ -77,6 +77,36 @@ class DownloadWorkerTest {
       assertEquals("bytes=4-", request.header("Range"))
    }
 
+   // -- Total size --
+
+   @Test
+   fun `an unstated content length has no total`() {
+      // OkHttp's -1. The download runs on the coarse byte cadence and reports
+      // indeterminate progress.
+      assertNull(DownloadWorker.totalSizeFor(-1L, 0L))
+      assertNull(DownloadWorker.totalSizeFor(-1L, 512L))
+   }
+
+   @Test
+   fun `a stated zero content length is a known total`() {
+      // An empty body is a complete download, not one of unknown length. Desktop
+      // reports 0 for the same response, and collapsing it to null disagreed.
+      assertEquals(0L, DownloadWorker.totalSizeFor(0L, 0L))
+   }
+
+   @Test
+   fun `a content length that overflows the sum has no total`() {
+      // The header is the server's to choose. Without the guard the wrapped Long
+      // reaches the caller as a negative total.
+      assertNull(DownloadWorker.totalSizeFor(Long.MAX_VALUE, 1L))
+   }
+
+   @Test
+   fun `a resumed download adds the bytes already held`() {
+      // The Range response counts only what is left to send.
+      assertEquals(1000L, DownloadWorker.totalSizeFor(600L, 400L))
+   }
+
    // -- Resume failure outcome --
 
    @Test

@@ -131,12 +131,7 @@ internal class DownloadWorker(
             val body = response.body
                ?: return handleError(manager, store, path, "Empty response body")
 
-            // Get the total size of the file from headers (if available).
-            // OkHttp reports -1 when unknown, which stays null rather than
-            // collapsing to a bogus zero total.
-            val contentLength = body.contentLength()
-            val contentLengthSum = contentLength + downloadedSize
-            val totalSize = if (contentLength > 0 && contentLengthSum > 0) contentLengthSum else null
+            val totalSize = totalSizeFor(body.contentLength(), downloadedSize)
 
             // Ensure the output folder exists.
             tempFile.parentFile?.let { parent ->
@@ -458,6 +453,30 @@ internal class DownloadWorker(
          }
 
          return builder.build()
+      }
+
+      /**
+       * The download's total size, or `null` when the server stated none.
+       *
+       * OkHttp reports -1 for an unstated length. A stated zero is a known total
+       * rather than an unknown one: an empty body is a complete download, and
+       * collapsing it to null disagreed with desktop, which reports 0.
+       *
+       * A sum that wrapped negative is not a total either. The header is the
+       * server's to choose, so one near [Long.MAX_VALUE] would otherwise reach the
+       * caller as a negative byte count.
+       *
+       * Built here rather than inline in [doWork], which needs [WorkerParameters]
+       * and so cannot be reached without WorkManager's test artifact.
+       *
+       * @param contentLength The body's content length, or -1 when unstated.
+       * @param downloadedSize Bytes already on disk, which a Range request excludes.
+       * @return The total size, or `null` when the server stated none.
+       */
+      internal fun totalSizeFor(contentLength: Long, downloadedSize: Long): Long? {
+         val total = contentLength + downloadedSize
+
+         return if (contentLength >= 0 && total >= 0) total else null
       }
 
       /**

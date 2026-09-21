@@ -602,6 +602,38 @@ mod tests {
    }
 
    #[tokio::test]
+   async fn test_an_empty_body_completes_with_a_zero_total() {
+      // A stated zero is a known total, not an unknown one. Android and iOS report
+      // the same for this response; both used to collapse it to null.
+      let fixture = make_fixture();
+      let server = MockServer::start().await;
+      let dest = dest_path(&fixture, "empty.bin");
+
+      Mock::given(method("GET"))
+         .and(wm_path("/empty"))
+         .respond_with(ResponseTemplate::new(200).set_body_bytes(Vec::new()))
+         .mount(&server)
+         .await;
+
+      let url = format!("{}/empty", server.uri());
+      let item = seed_in_progress(&fixture.manager, &dest, &url);
+
+      run_download(&fixture.manager, item).await.unwrap();
+
+      let completed = fixture
+         .events
+         .lock()
+         .unwrap()
+         .iter()
+         .find(|e| e.status == DownloadStatus::Completed)
+         .cloned()
+         .unwrap();
+
+      assert_eq!(completed.total_bytes, Some(0));
+      assert_eq!(completed.received_bytes, 0);
+   }
+
+   #[tokio::test]
    async fn test_http_error_returns_err_and_creates_no_file() {
       let fixture = make_fixture();
       let server = MockServer::start().await;

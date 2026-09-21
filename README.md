@@ -428,9 +428,10 @@ reading the platform log.
 
 Listeners can be attached to downloads in any status, including `Pending`, so they can
 be set up before the download is created. Each download state includes `receivedBytes`,
-`totalBytes`, and `progress`. When the server does not provide a content length,
+`totalBytes`, and `progress`. When the server does not state a content length,
 `totalBytes` is `null`; `progress` remains `0` until the terminal `Completed` event,
-where it is `100`.
+where it is `100`. A stated zero is a known total rather than an unknown one, so an
+empty file completes at `totalBytes` `0`.
 
 ```ts
 import { get, DownloadStatus } from 'tauri-plugin-download';
