@@ -1,8 +1,9 @@
-use tauri::{AppHandle, Runtime, command};
+use tauri::{AppHandle, Manager, Runtime, command};
 
 use crate::DownloadExt;
 use crate::Result;
 use crate::models::*;
+use crate::scope::DownloadScope;
 
 #[command]
 pub(crate) async fn list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<DownloadItem>> {
@@ -24,6 +25,8 @@ pub(crate) async fn create<R: Runtime>(
    url: String,
    options: Option<CreateOptionsArgs>,
 ) -> Result<DownloadActionResponse> {
+   app.state::<DownloadScope>().check(&path)?;
+
    let options = options.map(CreateOptions::from).unwrap_or_default();
 
    #[cfg(desktop)]
@@ -41,6 +44,8 @@ pub(crate) async fn start<R: Runtime>(
    app: AppHandle<R>,
    path: String,
 ) -> Result<DownloadActionResponse> {
+   app.state::<DownloadScope>().check(&path)?;
+
    #[cfg(desktop)]
    {
       app.download().start(&path).await
@@ -56,6 +61,8 @@ pub(crate) async fn resume<R: Runtime>(
    app: AppHandle<R>,
    path: String,
 ) -> Result<DownloadActionResponse> {
+   app.state::<DownloadScope>().check(&path)?;
+
    #[cfg(desktop)]
    {
       app.download().resume(&path).await

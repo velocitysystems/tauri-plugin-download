@@ -13,7 +13,8 @@ pub fn run() {
                 // it. `app.path()` resolves inside the sandbox on Android and iOS too,
                 // which a path written at the call site could not.
                 .on_setup(|app, config| {
-                    config.store_dir(app.path().app_data_dir()?.join("downloads"));
+                    config.store_dir(app.path().app_data_dir()?.join("store"));
+                    config.download_dirs([app.path().app_data_dir()?.join("downloads")]);
                     Ok(())
                 })
                 .build(),
