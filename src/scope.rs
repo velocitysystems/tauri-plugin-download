@@ -36,9 +36,16 @@ impl DownloadScope {
          }
       }
 
-      Ok(Self {
-         roots: roots.iter().map(|root| normalize(root)).collect(),
-      })
+      let roots: Vec<PathBuf> = roots.iter().map(|root| normalize(root)).collect();
+
+      // A filesystem root has no parent and is a prefix of every absolute path, so
+      // naming one leaves the plugin looking configured while bounding nothing.
+      // Checked after normalizing, which is what turns `/data/..` into one.
+      if roots.iter().any(|root| root.parent().is_none()) {
+         return Err(reject("download directory cannot be a filesystem root"));
+      }
+
+      Ok(Self { roots })
    }
 
    /// Checks that `path`, as received from the webview, is inside the scope.
@@ -177,6 +184,28 @@ mod tests {
          error.to_string(),
          "Path Error: download directory must be absolute"
       );
+   }
+
+   #[test]
+   fn test_a_filesystem_root_is_rejected() {
+      // The configuration that would look set up and bound nothing: every absolute
+      // path is inside the root, so the check would admit what it exists to refuse.
+      let error = DownloadScope::new(["/"]).unwrap_err();
+
+      assert_eq!(
+         error.to_string(),
+         "Path Error: download directory cannot be a filesystem root"
+      );
+
+      // Reached by `..` as well as written directly, which is why the check runs on
+      // the normalized root rather than the one the caller passed.
+      assert!(DownloadScope::new(["/data/.."]).is_err());
+
+      // One root short of the top is a narrow scope, not a missing one.
+      assert!(DownloadScope::new(["/data"]).is_ok());
+
+      // A good root does not rescue a bad one.
+      assert!(DownloadScope::new(["/data/downloads", "/"]).is_err());
    }
 
    #[test]

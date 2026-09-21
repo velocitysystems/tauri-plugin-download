@@ -229,9 +229,10 @@ Key behaviors:
      a download is created on its first write
    * `get`, `pause` and `cancel` are not bounded — none of them writes to disk, and
      each only reaches a record `create` already admitted
-   * Every download directory must be absolute; one bad directory fails plugin
-     initialization rather than being dropped, so an app is never bounded by fewer
-     directories than it named
+   * Every download directory must be absolute and below the filesystem root — a
+     root would admit every path, leaving the plugin configured but bounding nothing
+   * One bad directory fails plugin initialization rather than being dropped, so an
+     app is never bounded by fewer directories than it named
    * **Keep the download directories clear of `store_dir`.** Pointed at the same
      directory, a download named `downloads.json` overwrites the store
    * The bound is lexical, so a symbolic link inside a download directory that points

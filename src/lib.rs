@@ -115,7 +115,8 @@ impl SetupConfig {
    ///
    /// Every path the webview passes to `create`, `start` or `resume` must name a
    /// location inside one of them, once `.` and `..` are resolved. Each must be
-   /// absolute, and on mobile inside the app sandbox. Several rather than one
+   /// absolute and not a filesystem root, and on mobile inside the app sandbox,
+   /// which only `app.path()` can name. Several rather than one
    /// because destinations need not share a root, as `Documents` and `Library` do
    /// not on iOS.
    ///
