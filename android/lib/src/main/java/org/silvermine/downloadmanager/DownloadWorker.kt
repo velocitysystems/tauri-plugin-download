@@ -18,9 +18,12 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.security.cert.CertificateException
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
 
 /**
  * WorkManager CoroutineWorker that performs the actual HTTP download.
@@ -473,10 +476,26 @@ internal class DownloadWorker(
       internal fun isOutOfAttempts(runAttemptCount: Int): Boolean =
          runAttemptCount >= MAX_WORK_ATTEMPTS
 
-      private fun isTransient(e: IOException): Boolean = when (e) {
+      /**
+       * Whether a failure is worth retrying, and so must leave the partial in place.
+       *
+       * Matched by type, not by message: a connect timeout says "Connect timed out"
+       * or "failed to connect to ... after 30000ms", and a read timeout races
+       * between Okio's "timeout" and the socket's "Read timed out".
+       */
+      internal fun isTransient(e: IOException): Boolean = when (e) {
+         // Any timeout, whichever phase raised it. Before InterruptedIOException,
+         // which it extends and which otherwise means an interrupted read.
+         is SocketTimeoutException -> true
+         is InterruptedIOException -> false
+
          is UnknownHostException -> false  // DNS resolution failed
-         is SSLException -> false          // TLS/certificate errors
-         is InterruptedIOException -> e.message?.contains("timeout", ignoreCase = true) == true
+
+         // The two OkHttp's own retry refuses. A bare SSLException is transport-level
+         // — Conscrypt reports a mid-stream reset that way — and resumes fine.
+         is SSLPeerUnverifiedException -> false
+         is SSLHandshakeException -> e.cause !is CertificateException
+
          else -> true                      // Connection reset, broken pipe, etc.
       }
 
