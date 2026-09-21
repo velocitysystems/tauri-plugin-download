@@ -340,13 +340,13 @@ public final class DownloadManager: NSObject {
     Handler for download progress updates. Called by DownloadSessionDelegate.
 
     - Parameters:
-      - url: The URL of the download.
+      - path: The download path, which is the task's description.
       - totalBytesWritten: The total number of bytes transferred so far.
       - totalBytesExpectedToWrite: The expected length of the file, or a negative
         value when the server did not supply a content length.
     */
-   func handleProgress(url: URL, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) async {
-      guard var record = await store.findByUrl(url),
+   func handleProgress(path: String, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) async {
+      guard var record = await store.findByPath(path),
             record.status == .inProgress else { return }
 
       let receivedBytes = UInt64(max(totalBytesWritten, 0))
@@ -395,11 +395,11 @@ public final class DownloadManager: NSObject {
     The file has already been moved to a temp location by the delegate.
 
     - Parameters:
-      - url: The URL of the download.
+      - path: The download path, which is the task's description.
       - location: The temporary location of the downloaded file.
     */
-   func handleFinished(url: URL, location: URL) async {
-      guard var record = await store.findByUrl(url) else {
+   func handleFinished(path: String, location: URL) async {
+      guard var record = await store.findByPath(path) else {
          try? FileManager.default.removeItem(at: location)
          return
       }
@@ -452,12 +452,12 @@ public final class DownloadManager: NSObject {
     Handler for download errors. Called by DownloadSessionDelegate.
 
     - Parameters:
-      - url: The URL of the download.
+      - path: The download path, which is the task's description.
       - error: An error object indicating how the transfer failed, or nil if successful.
     */
-   func handleError(url: URL, error: Error?) async {
+   func handleError(path: String, error: Error?) async {
       guard let error = error,
-            let record = await store.findByUrl(url) else { return }
+            let record = await store.findByPath(path) else { return }
       
       // Cancellation with resume data. For user-invoked pauses, pause() may have
       // already persisted resume data. The atomic mutate ensures only one path wins.
