@@ -99,7 +99,28 @@ internal class DownloadWorker(
                   if (tempFile.exists()) tempFile.delete()
                   downloadedSize = 0L
                } else {
-                  return handleError(manager, store, path, "HTTP ${response.code}: ${response.message}")
+                  when (partialFileOutcomeFor(response.code, response.header("Content-Range"), downloadedSize)) {
+                     PartialFileOutcome.Complete -> {
+                        // Falls through to the rename below, which completes only an
+                        // InProgress record — a re-run after process death finds it
+                        // reconciled to Paused, as the streaming path does.
+                        Log.i(TAG, "Partial already complete; finishing")
+                        synchronized(manager) {
+                           store.findByPath(path)?.let { store.update(it.withStatus(DownloadStatus.InProgress)) }
+                        }
+                        finalReceivedBytes = downloadedSize
+                        finalTotalBytes = downloadedSize
+                        return@use
+                     }
+                     PartialFileOutcome.Discard -> {
+                        Log.w(TAG, "Range not satisfiable; discarding the unusable partial download")
+                        if (tempFile.exists()) tempFile.delete()
+                        return handleError(manager, store, path, "HTTP ${response.code}: ${response.message}")
+                     }
+                     PartialFileOutcome.KeepPartial -> {
+                        return handleError(manager, store, path, "HTTP ${response.code}: ${response.message}")
+                     }
+                  }
                }
             }
 
@@ -410,6 +431,8 @@ internal class DownloadWorker(
       throw lastException ?: IOException("Retry failed")
    }
 
+   internal enum class PartialFileOutcome { Discard, Complete, KeepPartial }
+
    companion object {
       const val KEY_URL = "download_url"
       const val KEY_PATH = "download_path"
@@ -437,9 +460,37 @@ internal class DownloadWorker(
          return builder.build()
       }
 
+      /**
+       * What a failed resume means for the partial. The one failure allowed to delete
+       * it is a 416: every resume would send the same unsatisfiable Range, and dropping
+       * it reverts to Idle, which start() can run again — unless the 416's
+       * `Content-Range` states a total equal to the partial, which is then complete.
+       *
+       * Built here rather than inline in [doWork], which cannot be reached without
+       * WorkManager's test artifact.
+       */
+      internal fun partialFileOutcomeFor(responseCode: Int, contentRange: String?, downloadedSize: Long): PartialFileOutcome {
+         if (responseCode != HTTP_RANGE_NOT_SATISFIABLE) {
+            return PartialFileOutcome.KeepPartial
+         }
+
+         val statedTotal = contentRange?.trim()
+            ?.takeIf { it.startsWith(RANGE_TOTAL_PREFIX) }
+            ?.removePrefix(RANGE_TOTAL_PREFIX)
+            ?.toLongOrNull()
+
+         return if (statedTotal == downloadedSize) {
+            PartialFileOutcome.Complete
+         } else {
+            PartialFileOutcome.Discard
+         }
+      }
+
       internal const val TAG = "DownloadWorker"
       internal const val DOWNLOAD_SUFFIX = ".download"
       private const val BUFFER_SIZE = 64 * 1024
+      private const val HTTP_RANGE_NOT_SATISFIABLE = 416
+      private const val RANGE_TOTAL_PREFIX = "bytes */"
       private const val MAX_RETRIES = 3
 
       /**

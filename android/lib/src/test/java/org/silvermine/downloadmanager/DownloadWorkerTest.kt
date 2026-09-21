@@ -77,6 +77,38 @@ class DownloadWorkerTest {
       assertEquals("bytes=4-", request.header("Range"))
    }
 
+   // -- Resume failure outcome --
+
+   @Test
+   fun `a 416 stating a total equal to the partial completes it`() {
+      assertEquals(
+         DownloadWorker.PartialFileOutcome.Complete,
+         DownloadWorker.partialFileOutcomeFor(416, "bytes */1000", 1000L),
+      )
+   }
+
+   @Test
+   fun `any other 416 discards the partial`() {
+      for (contentRange in listOf(null, "bytes */999", "bytes 0-499/1000", "1000", "bytes */abc")) {
+         assertEquals(
+            "Content-Range $contentRange",
+            DownloadWorker.PartialFileOutcome.Discard,
+            DownloadWorker.partialFileOutcomeFor(416, contentRange, 1000L),
+         )
+      }
+   }
+
+   @Test
+   fun `other failures on a resume keep the partial`() {
+      for (responseCode in listOf(503, 500, 404, 403)) {
+         assertEquals(
+            "HTTP $responseCode",
+            DownloadWorker.PartialFileOutcome.KeepPartial,
+            DownloadWorker.partialFileOutcomeFor(responseCode, "bytes */1000", 1000L),
+         )
+      }
+   }
+
    // -- Failure classification --
    //
    // Transient means the partial survives and the work is retried.

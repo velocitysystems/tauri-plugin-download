@@ -387,6 +387,12 @@ This covers an HTTP error status, a DNS failure, a TLS failure, a timeout that r
 of retries, and a destination that could not be written. On no platform is the record
 dropped, and only iOS loses a partial download, as described below.
 
+The single exception is a `416 Range Not Satisfiable` answering a resume, which is the
+server saying the bytes already held no longer belong to the resource. Those are
+discarded and the download reverts to `Idle`, so `start()` fetches it again from zero.
+On desktop and Android, a `416` whose `Content-Range` states a total equal to the bytes
+already held means the partial is the whole resource, so the download completes instead.
+
 What survives to resume from is the one place the platforms differ, because what they
 hold between attempts is not the same thing:
 
