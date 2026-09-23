@@ -320,9 +320,7 @@ public final class DownloadManager: NSObject {
          return DownloadActionResponse(download: record.toItem(), expectedStatus: .canceled)
       }
       
-      if let task = await getDownloadTask(path) {
-         task.cancel()
-      }
+      let task = await getDownloadTask(path)
       
       if let _ = loadResumeData(for: record) {
          deleteResumeData(for: record)
@@ -331,6 +329,11 @@ public final class DownloadManager: NSObject {
       
       record.setStatus(.canceled)
       await store.remove(record)
+
+      // Only once the record is gone: the task's own cancel callback would otherwise
+      // find it still inProgress and revert it.
+      task?.cancel()
+
       let item = await emitChanged(record)
       
       return DownloadActionResponse(download: item)
@@ -340,17 +343,17 @@ public final class DownloadManager: NSObject {
     Handler for download progress updates. Called by DownloadSessionDelegate.
 
     - Parameters:
-      - url: The URL of the download.
+      - path: The download path, which is the task's description.
       - totalBytesWritten: The total number of bytes transferred so far.
       - totalBytesExpectedToWrite: The expected length of the file, or a negative
         value when the server did not supply a content length.
     */
-   func handleProgress(url: URL, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) async {
-      guard var record = await store.findByUrl(url),
+   func handleProgress(path: String, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) async {
+      guard var record = await store.findByPath(path),
             record.status == .inProgress else { return }
 
       let receivedBytes = UInt64(max(totalBytesWritten, 0))
-      let totalBytes: UInt64? = totalBytesExpectedToWrite > 0 ? UInt64(totalBytesExpectedToWrite) : nil
+      let totalBytes = DownloadManager.statedTotal(totalBytesExpectedToWrite)
 
       // Record a known total independently of the throttle below. handleFinished
       // reads the total back off the record, so a download that completes without
@@ -395,11 +398,13 @@ public final class DownloadManager: NSObject {
     The file has already been moved to a temp location by the delegate.
 
     - Parameters:
-      - url: The URL of the download.
+      - path: The download path, which is the task's description.
       - location: The temporary location of the downloaded file.
+      - expectedBytes: The response's stated length, or a negative value when it
+        stated none.
     */
-   func handleFinished(url: URL, location: URL) async {
-      guard var record = await store.findByUrl(url) else {
+   func handleFinished(path: String, location: URL, expectedBytes: Int64) async {
+      guard var record = await store.findByPath(path) else {
          try? FileManager.default.removeItem(at: location)
          return
       }
@@ -414,9 +419,10 @@ public final class DownloadManager: NSObject {
          // record left InProgress with no task behind it would never emit again.
          try? FileManager.default.removeItem(at: location)
 
-         record.setStatus(.canceled)
-         await store.remove(record)
-         await emitChanged(record)
+         // Reverted, not cancelled, so the caller can fix the destination and try
+         // again. Desktop keeps its temp file and reaches Paused; the session's file
+         // is transient here, so this reverts to Idle.
+         await revertFailedRecord(path: record.path)
 
          return
       }
@@ -427,7 +433,11 @@ public final class DownloadManager: NSObject {
       // callback may have been throttled away before completion.
       let receivedBytes = DownloadManager.fileSize(at: record.fileURL) ?? record.receivedBytes
 
-      record.setBytes(received: receivedBytes, total: record.totalBytes)
+      // Falls back to the response's own figure: an empty body produces no progress
+      // callback, so nothing has recorded the header's total by now.
+      let totalBytes = record.totalBytes ?? DownloadManager.statedTotal(expectedBytes)
+
+      record.setBytes(received: receivedBytes, total: totalBytes)
       record.setStatus(.completed)
       await store.remove(record)
       await emitChanged(record)
@@ -452,12 +462,12 @@ public final class DownloadManager: NSObject {
     Handler for download errors. Called by DownloadSessionDelegate.
 
     - Parameters:
-      - url: The URL of the download.
+      - path: The download path, which is the task's description.
       - error: An error object indicating how the transfer failed, or nil if successful.
     */
-   func handleError(url: URL, error: Error?) async {
+   func handleError(path: String, error: Error?) async {
       guard let error = error,
-            let record = await store.findByUrl(url) else { return }
+            let record = await store.findByPath(path) else { return }
       
       // Cancellation with resume data. For user-invoked pauses, pause() may have
       // already persisted resume data. The atomic mutate ensures only one path wins.
@@ -482,12 +492,30 @@ public final class DownloadManager: NSObject {
          return
       }
       
-      // Download failed - update status and clean up
-      deleteResumeData(for: record)
-      if let updated = await mutateRecord(path: record.path, { $0.setStatus(.canceled) }) {
-         await store.remove(updated)
-         await emitChanged(updated)
-      }
+      // Reverted rather than cancelled: Canceled is what cancel() emits. The record's
+      // resumeDataPath is left alone — this branch only runs when the error carried no
+      // resume data, so it is all revertFailedRecord() has to choose Paused over Idle.
+      os_log(.error, log: Log.downloadManager, "Download failed for %{public}@: %{public}@",
+             record.fileURL.lastPathComponent, error.localizedDescription)
+
+      await revertFailedRecord(path: record.path)
+   }
+
+   /**
+    Handler for a response whose HTTP status says the body is not the resource.
+    Called by DownloadSessionDelegate, which discards the file rather than placing it.
+
+    - Parameters:
+      - path: The download path, which is the task's description.
+      - statusCode: The response's HTTP status code.
+    */
+   func handleFailedResponse(path: String, statusCode: Int) async {
+      guard let record = await store.findByPath(path) else { return }
+
+      os_log(.error, log: Log.downloadManager, "Download failed for %{public}@: HTTP %{public}d",
+             record.fileURL.lastPathComponent, statusCode)
+
+      await revertFailedRecord(path: record.path)
    }
    
    /**
@@ -503,6 +531,27 @@ public final class DownloadManager: NSObject {
 
    private func ensureReconciled() async {
       await reconcileTask?.value
+   }
+
+   /// Reverts a record whose transfer failed, leaving the caller something to retry.
+   ///
+   /// [reconciledRecord] decides the status, so a failure and a process death leave
+   /// the same record behind, and one that is no longer `inProgress` — a pause or a
+   /// cancel that landed first — is left alone. The mutation's own call is the
+   /// authoritative one; the read before it only avoids a no-op emission.
+   private func revertFailedRecord(path: String) async {
+      func reverted(_ record: DownloadRecord) -> DownloadRecord? {
+         return DownloadManager.reconciledRecord(record, hasLiveTask: false)
+      }
+
+      guard let current = await store.findByPath(path), reverted(current) != nil,
+            let updated = await mutateRecord(path: path, { record in
+               if let next = reverted(record) { record = next }
+            }) else {
+         return
+      }
+
+      await emitChanged(updated)
    }
 
    /// Builds the request a download's task runs on, applying the record's network
@@ -641,6 +690,16 @@ public final class DownloadManager: NSObject {
       let item = record.toItem()
       await downloadContinuation.yield(item)
       return item
+   }
+
+   /// A response's stated length, or nil when it stated none.
+   ///
+   /// URLSession reports `NSURLSessionTransferSizeUnknown` (-1) for a body whose
+   /// length the server withheld, such as a chunked response. A stated zero is a
+   /// known total rather than an unknown one: an empty body is a complete download,
+   /// and collapsing it to nil disagreed with desktop, which reports 0.
+   static func statedTotal(_ expectedBytes: Int64) -> UInt64? {
+      return expectedBytes >= 0 ? UInt64(expectedBytes) : nil
    }
 
    static func fileSize(at url: URL) -> UInt64? {

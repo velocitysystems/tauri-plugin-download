@@ -5,6 +5,16 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
+import java.io.InterruptedIOException
+import java.net.ProtocolException
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.security.cert.CertificateException
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
 
 class DownloadWorkerTest {
 
@@ -65,5 +75,133 @@ class DownloadWorkerTest {
 
       assertEquals("my-app/1.0", request.header("User-Agent"))
       assertEquals("bytes=4-", request.header("Range"))
+   }
+
+   // -- Total size --
+
+   @Test
+   fun `an unstated content length has no total`() {
+      // OkHttp's -1. The download runs on the coarse byte cadence and reports
+      // indeterminate progress.
+      assertNull(DownloadWorker.totalSizeFor(-1L, 0L))
+      assertNull(DownloadWorker.totalSizeFor(-1L, 512L))
+   }
+
+   @Test
+   fun `a stated zero content length is a known total`() {
+      // An empty body is a complete download, not one of unknown length. Desktop
+      // reports 0 for the same response, and collapsing it to null disagreed.
+      assertEquals(0L, DownloadWorker.totalSizeFor(0L, 0L))
+   }
+
+   @Test
+   fun `a content length that overflows the sum has no total`() {
+      // The header is the server's to choose. Without the guard the wrapped Long
+      // reaches the caller as a negative total.
+      assertNull(DownloadWorker.totalSizeFor(Long.MAX_VALUE, 1L))
+   }
+
+   @Test
+   fun `a resumed download adds the bytes already held`() {
+      // The Range response counts only what is left to send.
+      assertEquals(1000L, DownloadWorker.totalSizeFor(600L, 400L))
+   }
+
+   // -- Resume failure outcome --
+
+   @Test
+   fun `a 416 stating a total equal to the partial completes it`() {
+      assertEquals(
+         DownloadWorker.PartialFileOutcome.Complete,
+         DownloadWorker.partialFileOutcomeFor(416, "bytes */1000", 1000L),
+      )
+   }
+
+   @Test
+   fun `any other 416 discards the partial`() {
+      for (contentRange in listOf(null, "bytes */999", "bytes 0-499/1000", "1000", "bytes */abc")) {
+         assertEquals(
+            "Content-Range $contentRange",
+            DownloadWorker.PartialFileOutcome.Discard,
+            DownloadWorker.partialFileOutcomeFor(416, contentRange, 1000L),
+         )
+      }
+   }
+
+   @Test
+   fun `other failures on a resume keep the partial`() {
+      for (responseCode in listOf(503, 500, 404, 403)) {
+         assertEquals(
+            "HTTP $responseCode",
+            DownloadWorker.PartialFileOutcome.KeepPartial,
+            DownloadWorker.partialFileOutcomeFor(responseCode, "bytes */1000", 1000L),
+         )
+      }
+   }
+
+   // -- Failure classification --
+   //
+   // Transient means the partial survives and the work is retried.
+
+   @Test
+   fun `a connect timeout is transient whatever the platform calls it`() {
+      // The JVM's wording and Android libcore's. Neither says "timeout".
+      assertTrue(DownloadWorker.isTransient(SocketTimeoutException("Connect timed out")))
+      assertTrue(
+         DownloadWorker.isTransient(
+            SocketTimeoutException(
+               "failed to connect to example.com/93.184.216.34 (port 443) from /10.0.2.15 (port 41234) after 30000ms",
+            ),
+         ),
+      )
+   }
+
+   @Test
+   fun `a read timeout is transient from either racing source`() {
+      // OkHttp sets the socket timeout to the same interval as Okio's watchdog, so
+      // which message arrives is a race. Both must classify alike.
+      assertTrue(DownloadWorker.isTransient(SocketTimeoutException("timeout")))
+      assertTrue(DownloadWorker.isTransient(SocketTimeoutException("Read timed out")))
+   }
+
+   @Test
+   fun `an interrupt that is not a timeout is permanent`() {
+      // This process tearing the read down, not the network failing.
+      assertFalse(DownloadWorker.isTransient(InterruptedIOException("thread interrupted")))
+   }
+
+   @Test
+   fun `a DNS failure is permanent`() {
+      assertFalse(DownloadWorker.isTransient(UnknownHostException("example.invalid")))
+   }
+
+   @Test
+   fun `a mid-stream TLS failure is transient`() {
+      // Conscrypt reports a reset inside an established TLS session this way.
+      assertTrue(DownloadWorker.isTransient(SSLException("Read error: ssl=0x0: I/O error during system call, Connection reset by peer")))
+   }
+
+   @Test
+   fun `a certificate failure is permanent`() {
+      // Retrying cannot make an untrusted certificate trusted.
+      val handshake = SSLHandshakeException("Trust anchor for certification path not found")
+
+      handshake.initCause(CertificateException("untrusted root"))
+
+      assertFalse(DownloadWorker.isTransient(handshake))
+      assertFalse(DownloadWorker.isTransient(SSLPeerUnverifiedException("Hostname example.com not verified")))
+   }
+
+   @Test
+   fun `a handshake failure with no certificate cause is transient`() {
+      // Matches OkHttp's isRecoverable, which refuses only the certificate case.
+      assertTrue(DownloadWorker.isTransient(SSLHandshakeException("Connection closed by peer")))
+   }
+
+   @Test
+   fun `an ordinary network failure is transient`() {
+      assertTrue(DownloadWorker.isTransient(SocketException("Connection reset")))
+      assertTrue(DownloadWorker.isTransient(IOException("unexpected end of stream")))
+      assertTrue(DownloadWorker.isTransient(ProtocolException("unexpected status line")))
    }
 }

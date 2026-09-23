@@ -96,10 +96,6 @@ actor DownloadStore {
       downloads.first(where: { $0.path == path })
    }
    
-   func findByUrl(_ url: URL) -> DownloadRecord? {
-      downloads.first(where: { $0.url == url })
-   }
-   
    func append(_ item: DownloadRecord) {
       downloads.append(item)
       save()
@@ -118,7 +114,7 @@ actor DownloadStore {
    /// record, or nil when the total was already known.
    ///
    /// Progress callbacks arrive as unordered tasks, so a compare-and-set composed
-   /// from a separate `findByUrl` and `update` lets several callbacks each read an
+   /// from a separate `findByPath` and `update` lets several callbacks each read an
    /// unknown total and each act on it. Deliberately does not persist: pause,
    /// cancel and completion all write the record, and this runs on the hottest
    /// callback in the system.

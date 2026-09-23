@@ -83,6 +83,13 @@ final class URLParserTests: XCTestCase {
       XCTAssertThrowsError(try parseURL("not a valid url"))
    }
 
+   func testURLWithCredentialsThrows() {
+      XCTAssertThrowsError(try parseURL("https://user:pass@example.com/file.mp4"))
+      XCTAssertThrowsError(try parseURL("https://user@example.com/file.mp4"))
+      // A password with no username is still credentials.
+      XCTAssertThrowsError(try parseURL("https://:pass@example.com/file.mp4"))
+   }
+
    // MARK: - Messages
 
    func testPathMessagesMatchOtherPlatforms() {
@@ -100,6 +107,10 @@ final class URLParserTests: XCTestCase {
       XCTAssertEqual(
          message { try parseURL("ftp://example.com/file.mp4") },
          "URL Error: Invalid URL scheme 'ftp': must be http or https"
+      )
+      XCTAssertEqual(
+         message { try parseURL("https://user:pass@example.com/file.mp4") },
+         "URL Error: URL must not contain credentials"
       )
    }
 

@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use reqwest::header::{HeaderMap, RANGE};
+use reqwest::header::{CONTENT_RANGE, HeaderMap, RANGE};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -60,8 +60,35 @@ async fn download_with_header_hook(
       }
    };
 
-   // Validate response status before streaming the body.
    let status = response.status();
+
+   // The one failure allowed to delete a partial: a 416 says the temp file no longer
+   // matches the resource, so every resume would send the same unsatisfiable Range.
+   // Dropping it reverts to Idle instead of Paused, which start() can run again —
+   // unless the stated total equals the partial, which is then already complete.
+   if downloaded_size > 0 && status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+      let content_range = response
+         .headers()
+         .get(CONTENT_RANGE)
+         .and_then(|value| value.to_str().ok());
+
+      if unsatisfiable_range_total(content_range) == Some(downloaded_size) {
+         tracing::info!(file = %active.path(), "Partial already complete; finishing");
+         active.finish(&temp_path, downloaded_size, Some(downloaded_size))?;
+         return Ok(());
+      }
+
+      tracing::warn!(
+         file = %active.path(),
+         "Range not satisfiable; discarding the unusable partial download"
+      );
+      if Path::new(&temp_path).exists() {
+         fs::remove_file(&temp_path)
+            .map_err(|e| Error::File(format!("Failed to delete stale temp file: {}", e)))?;
+      }
+   }
+
+   // Validate response status before streaming the body.
    if !status.is_success() {
       return Err(Error::Http(format!(
          "HTTP {}: {}",
@@ -152,6 +179,12 @@ async fn download_with_header_hook(
    active.finish(&temp_path, progress.received_bytes, total_size)?;
 
    Ok(())
+}
+
+/// The resource's total from a 416's `Content-Range: bytes */N`, or `None` for anything
+/// else.
+fn unsatisfiable_range_total(content_range: Option<&str>) -> Option<u64> {
+   content_range?.strip_prefix("bytes */")?.trim().parse().ok()
 }
 
 /// Tracks download progress and controls when emissions are sent.
@@ -497,6 +530,107 @@ mod tests {
          .unwrap();
       assert_eq!(completed.received_bytes, full_body.len() as u64);
       assert_eq!(completed.total_bytes, Some(full_body.len() as u64));
+   }
+
+   #[tokio::test]
+   async fn test_resume_discards_the_partial_when_the_range_is_not_satisfiable() {
+      // No Content-Range confirms the partial is complete, so it is discarded. With no
+      // temp file, revert_in_progress lands on Idle, as
+      // test_init_reverts_in_progress_without_temp_file_to_idle shows.
+      let fixture = make_fixture();
+      let server = MockServer::start().await;
+
+      let dest = dest_path(&fixture, "stale.bin");
+      let temp_path = format!("{}{}", dest, DOWNLOAD_SUFFIX);
+      fs::write(&temp_path, b"bytes past the end of a shrunken resource").unwrap();
+
+      Mock::given(method("GET"))
+         .and(wm_path("/stale"))
+         .respond_with(ResponseTemplate::new(416))
+         .mount(&server)
+         .await;
+
+      let url = format!("{}/stale", server.uri());
+      let item = seed_in_progress(&fixture.manager, &dest, &url);
+
+      assert!(run_download(&fixture.manager, item).await.is_err());
+
+      assert!(!Path::new(&temp_path).exists());
+      assert!(!Path::new(&dest).exists());
+   }
+
+   #[tokio::test]
+   async fn test_resume_finishes_when_416_confirms_the_partial_is_complete() {
+      // A failed rename or a process death before it leaves the whole resource in the
+      // temp file, so the resume's Range gets a 416.
+      let fixture = make_fixture();
+      let server = MockServer::start().await;
+      let body = b"already complete".to_vec();
+
+      let dest = dest_path(&fixture, "complete.bin");
+      let temp_path = format!("{}{}", dest, DOWNLOAD_SUFFIX);
+      fs::write(&temp_path, &body).unwrap();
+
+      Mock::given(method("GET"))
+         .and(wm_path("/complete"))
+         .respond_with(
+            ResponseTemplate::new(416)
+               .append_header("Content-Range", format!("bytes */{}", body.len())),
+         )
+         .mount(&server)
+         .await;
+
+      let url = format!("{}/complete", server.uri());
+      let item = seed_in_progress(&fixture.manager, &dest, &url);
+
+      run_download(&fixture.manager, item).await.unwrap();
+
+      // Destination holds the body; temp file is gone.
+      assert_eq!(fs::read(&dest).unwrap(), body);
+      assert!(!Path::new(&temp_path).exists());
+
+      let completed = fixture
+         .events
+         .lock()
+         .unwrap()
+         .iter()
+         .find(|e| e.status == DownloadStatus::Completed)
+         .cloned()
+         .unwrap();
+      assert_eq!(completed.received_bytes, body.len() as u64);
+      assert_eq!(completed.total_bytes, Some(body.len() as u64));
+   }
+
+   #[tokio::test]
+   async fn test_an_empty_body_completes_with_a_zero_total() {
+      // A stated zero is a known total, not an unknown one. Android and iOS report
+      // the same for this response; both used to collapse it to null.
+      let fixture = make_fixture();
+      let server = MockServer::start().await;
+      let dest = dest_path(&fixture, "empty.bin");
+
+      Mock::given(method("GET"))
+         .and(wm_path("/empty"))
+         .respond_with(ResponseTemplate::new(200).set_body_bytes(Vec::new()))
+         .mount(&server)
+         .await;
+
+      let url = format!("{}/empty", server.uri());
+      let item = seed_in_progress(&fixture.manager, &dest, &url);
+
+      run_download(&fixture.manager, item).await.unwrap();
+
+      let completed = fixture
+         .events
+         .lock()
+         .unwrap()
+         .iter()
+         .find(|e| e.status == DownloadStatus::Completed)
+         .cloned()
+         .unwrap();
+
+      assert_eq!(completed.total_bytes, Some(0));
+      assert_eq!(completed.received_bytes, 0);
    }
 
    #[tokio::test]

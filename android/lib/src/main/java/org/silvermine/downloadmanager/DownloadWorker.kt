@@ -18,9 +18,12 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.security.cert.CertificateException
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
 
 /**
  * WorkManager CoroutineWorker that performs the actual HTTP download.
@@ -96,23 +99,39 @@ internal class DownloadWorker(
                   if (tempFile.exists()) tempFile.delete()
                   downloadedSize = 0L
                } else {
-                  return handleError(manager, store, path, tempFile, "HTTP ${response.code}: ${response.message}")
+                  when (partialFileOutcomeFor(response.code, response.header("Content-Range"), downloadedSize)) {
+                     PartialFileOutcome.Complete -> {
+                        // Falls through to the rename below, which completes only an
+                        // InProgress record — a re-run after process death finds it
+                        // reconciled to Paused, as the streaming path does.
+                        Log.i(TAG, "Partial already complete; finishing")
+                        synchronized(manager) {
+                           store.findByPath(path)?.let { store.update(it.withStatus(DownloadStatus.InProgress)) }
+                        }
+                        finalReceivedBytes = downloadedSize
+                        finalTotalBytes = downloadedSize
+                        return@use
+                     }
+                     PartialFileOutcome.Discard -> {
+                        Log.w(TAG, "Range not satisfiable; discarding the unusable partial download")
+                        if (tempFile.exists()) tempFile.delete()
+                        return handleError(manager, store, path, "HTTP ${response.code}: ${response.message}")
+                     }
+                     PartialFileOutcome.KeepPartial -> {
+                        return handleError(manager, store, path, "HTTP ${response.code}: ${response.message}")
+                     }
+                  }
                }
             }
 
             if (!response.isSuccessful && response.code != 206) {
-               return handleError(manager, store, path, tempFile, "HTTP ${response.code}: ${response.message}")
+               return handleError(manager, store, path, "HTTP ${response.code}: ${response.message}")
             }
 
             val body = response.body
-               ?: return handleError(manager, store, path, tempFile, "Empty response body")
+               ?: return handleError(manager, store, path, "Empty response body")
 
-            // Get the total size of the file from headers (if available).
-            // OkHttp reports -1 when unknown, which stays null rather than
-            // collapsing to a bogus zero total.
-            val contentLength = body.contentLength()
-            val contentLengthSum = contentLength + downloadedSize
-            val totalSize = if (contentLength > 0 && contentLengthSum > 0) contentLengthSum else null
+            val totalSize = totalSizeFor(body.contentLength(), downloadedSize)
 
             // Ensure the output folder exists.
             tempFile.parentFile?.let { parent ->
@@ -245,21 +264,19 @@ internal class DownloadWorker(
          // Error handling is deferred outside the synchronized block to avoid
          // reentrant lock acquisition (handleError also synchronizes on manager).
          if (renameFailed) {
-            return handleError(manager, store, path, tempFile, "Failed to move download to $path")
+            return handleError(manager, store, path, "Failed to move download to $path")
          }
 
          dismissNotification()
          return Result.success()
       } catch (e: Exception) {
-         // Transient failures (network drops mid-download) preserve the temp file
-         // and transition to Paused so the download can be resumed later. This
-         // mirrors iOS behavior where URLSession saves resume data for transient
-         // errors. Permanent failures (DNS, TLS) delete the temp file and cancel.
+         // Transient failures retry, resuming through a Range header; permanent ones
+         // give up now. Neither deletes the partial or drops the record.
          val isTransientFailure = e is IOException && isTransient(e)
          return if (isTransientFailure) {
             handleTransientError(manager, store, path, e.message ?: "Unknown error")
          } else {
-            handleError(manager, store, path, tempFile, e.message ?: "Unknown error")
+            handleError(manager, store, path, e.message ?: "Unknown error")
          }
       }
    }
@@ -291,22 +308,17 @@ internal class DownloadWorker(
 
    /**
     * Handles permanent failures (HTTP errors, rename failures, DNS/TLS errors).
-    * Deletes the temp file, cancels the download, and removes it from the store.
+    *
+    * Reverts to Paused or Idle and leaves the temp file, as desktop does: Canceled
+    * is what cancel() emits, and a failed download is still one the caller may
+    * resume. Differs from [handleTransientError] only in giving up immediately.
     */
-   private fun handleError(manager: DownloadManager, store: DownloadStore, path: String, tempFile: File, message: String): Result {
+   private fun handleError(manager: DownloadManager, store: DownloadStore, path: String, message: String): Result {
       Log.e(TAG, "Download failed (permanent) for $path: $message")
 
-      // Synchronized on manager to prevent interleaving with cancel/pause.
-      synchronized(manager) {
-         if (tempFile.exists()) tempFile.delete()
-         store.findByPath(path)?.let { record ->
-            val canceled = record.withStatus(DownloadStatus.Canceled)
-            store.remove(record)
-            manager.emitChanged(canceled)
-         }
-      }
-
+      revertInProgressRecord(manager, store, path)
       dismissNotification()
+
       return Result.failure()
    }
 
@@ -414,6 +426,8 @@ internal class DownloadWorker(
       throw lastException ?: IOException("Retry failed")
    }
 
+   internal enum class PartialFileOutcome { Discard, Complete, KeepPartial }
+
    companion object {
       const val KEY_URL = "download_url"
       const val KEY_PATH = "download_path"
@@ -441,9 +455,61 @@ internal class DownloadWorker(
          return builder.build()
       }
 
+      /**
+       * The download's total size, or `null` when the server stated none.
+       *
+       * OkHttp reports -1 for an unstated length. A stated zero is a known total
+       * rather than an unknown one: an empty body is a complete download, and
+       * collapsing it to null disagreed with desktop, which reports 0.
+       *
+       * A sum that wrapped negative is not a total either. The header is the
+       * server's to choose, so one near [Long.MAX_VALUE] would otherwise reach the
+       * caller as a negative byte count.
+       *
+       * Built here rather than inline in [doWork], which needs [WorkerParameters]
+       * and so cannot be reached without WorkManager's test artifact.
+       *
+       * @param contentLength The body's content length, or -1 when unstated.
+       * @param downloadedSize Bytes already on disk, which a Range request excludes.
+       * @return The total size, or `null` when the server stated none.
+       */
+      internal fun totalSizeFor(contentLength: Long, downloadedSize: Long): Long? {
+         val total = contentLength + downloadedSize
+
+         return if (contentLength >= 0 && total >= 0) total else null
+      }
+
+      /**
+       * What a failed resume means for the partial. The one failure allowed to delete
+       * it is a 416: every resume would send the same unsatisfiable Range, and dropping
+       * it reverts to Idle, which start() can run again — unless the 416's
+       * `Content-Range` states a total equal to the partial, which is then complete.
+       *
+       * Built here rather than inline in [doWork], which cannot be reached without
+       * WorkManager's test artifact.
+       */
+      internal fun partialFileOutcomeFor(responseCode: Int, contentRange: String?, downloadedSize: Long): PartialFileOutcome {
+         if (responseCode != HTTP_RANGE_NOT_SATISFIABLE) {
+            return PartialFileOutcome.KeepPartial
+         }
+
+         val statedTotal = contentRange?.trim()
+            ?.takeIf { it.startsWith(RANGE_TOTAL_PREFIX) }
+            ?.removePrefix(RANGE_TOTAL_PREFIX)
+            ?.toLongOrNull()
+
+         return if (statedTotal == downloadedSize) {
+            PartialFileOutcome.Complete
+         } else {
+            PartialFileOutcome.Discard
+         }
+      }
+
       internal const val TAG = "DownloadWorker"
       internal const val DOWNLOAD_SUFFIX = ".download"
       private const val BUFFER_SIZE = 64 * 1024
+      private const val HTTP_RANGE_NOT_SATISFIABLE = 416
+      private const val RANGE_TOTAL_PREFIX = "bytes */"
       private const val MAX_RETRIES = 3
 
       /**
@@ -473,10 +539,26 @@ internal class DownloadWorker(
       internal fun isOutOfAttempts(runAttemptCount: Int): Boolean =
          runAttemptCount >= MAX_WORK_ATTEMPTS
 
-      private fun isTransient(e: IOException): Boolean = when (e) {
+      /**
+       * Whether a failure is worth retrying, and so must leave the partial in place.
+       *
+       * Matched by type, not by message: a connect timeout says "Connect timed out"
+       * or "failed to connect to ... after 30000ms", and a read timeout races
+       * between Okio's "timeout" and the socket's "Read timed out".
+       */
+      internal fun isTransient(e: IOException): Boolean = when (e) {
+         // Any timeout, whichever phase raised it. Before InterruptedIOException,
+         // which it extends and which otherwise means an interrupted read.
+         is SocketTimeoutException -> true
+         is InterruptedIOException -> false
+
          is UnknownHostException -> false  // DNS resolution failed
-         is SSLException -> false          // TLS/certificate errors
-         is InterruptedIOException -> e.message?.contains("timeout", ignoreCase = true) == true
+
+         // The two OkHttp's own retry refuses. A bare SSLException is transport-level
+         // — Conscrypt reports a mid-stream reset that way — and resumes fine.
+         is SSLPeerUnverifiedException -> false
+         is SSLHandshakeException -> e.cause !is CertificateException
+
          else -> true                      // Connection reset, broken pipe, etc.
       }
 

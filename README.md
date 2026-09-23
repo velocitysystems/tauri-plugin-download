@@ -241,6 +241,13 @@ Key behaviors:
      not caught
    * The bound is lexical, so a symbolic link inside a download directory that points
      outside it is not resolved
+   * A download URL must be `http` or `https`, must have a host, and must not carry
+     credentials: `https://user:pass@host/file` is rejected on every platform, since
+     the store and the logs would both keep them
+   * Each platform parses URLs with its own library, so the accepted set is not
+     identical — Android's `java.net.URI` refuses unencoded spaces and underscored
+     hosts, and iOS before 17 refuses unencoded spaces too; desktop accepts both.
+     Percent-encode anything unusual
 
 ### API
 
@@ -353,8 +360,8 @@ before the connection drops — the two race — the retry moves it back to `InP
 record merely waiting, on the unmetered constraint or in a retry backoff, stays
 `InProgress` with no worker running; restart the app then and the plugin reconciles it to
 `Paused`, or `Idle` at zero bytes when no partial file survives, before the pending work
-moves it back. Reconciliation emits no event, so the stale value arrives through the next
-`get()` or `list()`.
+moves it back. Reconciliation on mobile emits no event, so the stale value arrives
+through the next `get()` or `list()`; desktop emits one.
 
 So treat `Paused` and `Idle` as "not currently transferring" rather than "waiting for the
 user", and drive recovery off events. No bytes are lost either way. Constraint holds are
@@ -372,13 +379,66 @@ exposes its resolved policy through `download.options.allowMetered`. Calling `cr
 again for an existing path returns the existing record without changing its URL or
 options.
 
+#### When a download fails
+
+A download that fails is never reported as `Canceled`. `Canceled` means `cancel()` was
+called. A failure reverts the download instead, so the record survives and you decide
+what happens next:
+
+| After a failure | Status | What to call |
+| --- | --- | --- |
+| Something survives to resume from | `Paused` | `resume()` — the transfer continues from the bytes already held |
+| Nothing does | `Idle`, at zero bytes | `start()` — the transfer begins again |
+
+This covers an HTTP error status, a DNS failure, a TLS failure, a timeout that ran out
+of retries, and a destination that could not be written. On no platform is the record
+dropped, and only iOS loses a partial download, as described below.
+
+The single exception is a `416 Range Not Satisfiable` answering a resume, which is the
+server saying the bytes already held no longer belong to the resource. Those are
+discarded and the download reverts to `Idle`, so `start()` fetches it again from zero.
+On desktop and Android, a `416` whose `Content-Range` states a total equal to the bytes
+already held means the partial is the whole resource, so the download completes instead.
+
+What survives to resume from is the one place the platforms differ, because what they
+hold between attempts is not the same thing:
+
+| Platform | Held between attempts |
+| --- | --- |
+| Desktop, Android | The partial file on disk, so any failure after the first bytes land leaves `Paused` |
+| iOS | `URLSession` resume data, which the system produces for some failures and not others |
+
+So the difference shows on iOS only: a failure the system produced no resume data for
+reverts to `Idle` and restarts from zero. An HTTP error status, including one answering
+`resume()`, and a destination that could not be written always do, because the file
+`URLSession` hands over is deleted as soon as the callback returns — desktop and Android
+keep their temp file through both and revert to `Paused`.
+
+No event carries the reason a download failed; the status change is all you get.
+Failures are logged on every platform, so telling a 404 from a lost connection means
+reading the platform log.
+
+Nothing marks a record as failed, so a failed download looks exactly like one you
+created and never started, or one you paused yourself. Nothing removes it either: the
+record and any partial file stay until you act. Call `cancel()` to discard a download
+you have given up on, which removes the record and deletes its partial file. Reporting
+when and why a download failed is tracked in
+[#25](https://github.com/silvermine/tauri-plugin-download/issues/25).
+
+> A `Paused` record's `receivedBytes` is the last value a progress event reported, not a
+> fresh measurement, and progress is emitted on whole-percent changes — so a download
+> paused early can read `0`. Desktop and Android re-measure the partial file when they
+> revert a download, but iOS cannot: resume data is an opaque blob with no documented
+> size. The value corrects itself on the first event after `resume()`.
+
 #### Listen for progress notifications
 
 Listeners can be attached to downloads in any status, including `Pending`, so they can
 be set up before the download is created. Each download state includes `receivedBytes`,
-`totalBytes`, and `progress`. When the server does not provide a content length,
+`totalBytes`, and `progress`. When the server does not state a content length,
 `totalBytes` is `null`; `progress` remains `0` until the terminal `Completed` event,
-where it is `100`.
+where it is `100`. A stated zero is a known total rather than an unknown one, so an
+empty file completes at `totalBytes` `0`.
 
 ```ts
 import { get, DownloadStatus } from 'tauri-plugin-download';
@@ -412,6 +472,12 @@ await download.listen((updated) => {
    console.debug(`'${updated.path}': ${updated.progress}%`);
 }, { autoUnlisten: true });
 ```
+
+A failure is not a terminal state, so `autoUnlisten` does not fire on one: the
+download reverts to `Paused` or `Idle` and the listener stays attached, which is what
+lets you watch the retry. Call `unlisten()` yourself, or `cancel()` the download, to
+release a listener on something you have given up on. See
+[When a download fails](#when-a-download-fails).
 
 ### Examples
 

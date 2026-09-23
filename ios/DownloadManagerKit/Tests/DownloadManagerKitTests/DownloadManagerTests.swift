@@ -65,6 +65,48 @@ final class DownloadManagerTests: XCTestCase {
       }
    }
 
+   // MARK: - Stated total
+
+   func testUnstatedLengthHasNoTotal() {
+      // NSURLSessionTransferSizeUnknown, which a chunked response reports.
+      XCTAssertNil(DownloadManager.statedTotal(-1))
+   }
+
+   func testStatedZeroLengthIsAKnownTotal() {
+      // An empty body is a complete download, not one of unknown length. Desktop
+      // reports 0 for the same response, and collapsing it to nil disagreed.
+      XCTAssertEqual(DownloadManager.statedTotal(0), 0)
+   }
+
+   func testStatedLengthIsCarriedThrough() {
+      XCTAssertEqual(DownloadManager.statedTotal(1000), 1000)
+   }
+
+   // MARK: - Response status
+
+   // URLSession reports a 4xx or 5xx as a finished download whose file is the error
+   // body, so the delegate reads the status before taking the file.
+
+   func testSuccessStatusesAreAccepted() {
+      XCTAssertTrue(DownloadSessionDelegate.isSuccessStatus(200))
+      // A resumed transfer, which is resume()'s normal path rather than an edge case.
+      XCTAssertTrue(DownloadSessionDelegate.isSuccessStatus(206))
+      XCTAssertTrue(DownloadSessionDelegate.isSuccessStatus(299))
+   }
+
+   func testFailureStatusesAreRejected() {
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(404))
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(500))
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(503))
+   }
+
+   func testRedirectAndInformationalStatusesAreRejected() {
+      // URLSession follows redirects itself, so a 3xx arriving here is not the
+      // resource. Also pins both bounds of the accepted range.
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(199))
+      XCTAssertFalse(DownloadSessionDelegate.isSuccessStatus(304))
+   }
+
    // MARK: - Placing the downloaded file
 
    func testPlacingDownloadedFileCreatesMissingParentDirectory() throws {
