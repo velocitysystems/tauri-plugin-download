@@ -5,8 +5,28 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
 
 class DownloadWorkerTest {
+
+   @Test
+   fun `worker exit removes only orphaned partial files`() {
+      val partial = Files.createTempFile("download-worker", ".download").toFile()
+      try {
+         for (status in DownloadStatus.entries) {
+            partial.writeText("retained bytes")
+            val record = DownloadRecord("https://example.com/file", "/tmp/file", status = status)
+            DownloadWorker.discardOrphanedPartial(record, partial)
+            assertEquals("retained bytes", partial.readText())
+         }
+         DownloadWorker.discardOrphanedPartial(null, partial)
+         assertFalse(partial.exists())
+         DownloadWorker.discardOrphanedPartial(null, partial)
+         assertFalse(partial.exists())
+      } finally {
+         partial.delete()
+      }
+   }
 
    // Recovery decisions run without a worker; runAttemptCount counts prior runs.
 

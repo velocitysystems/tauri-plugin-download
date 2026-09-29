@@ -245,7 +245,8 @@ internal class DownloadWorker(
                   .withStatus(DownloadStatus.Completed)
                store.recordCompletion(completed) { manager.emitChanged(it) }
             } else {
-               // A concurrent pause/cancel won; do not publish or discard a retained partial.
+               discardOrphanedPartial(currentRecord, tempFile)
+               // Preserve partial data only while a record still owns it.
                Log.w(TAG, "Download item not found or not in expected state after download completed for $path")
             }
          }
@@ -267,14 +268,16 @@ internal class DownloadWorker(
     * the next reconcileStoreOnInit().
     *
     * [DownloadManager.revertInProgress] decides the resulting status, so this and
-    * reconciliation cannot drift apart. The temp file is left in place, and a
+    * reconciliation cannot drift apart. The temp file is kept only if a record exists, and a
     * record that is no longer InProgress — a pause that landed first — is left
     * alone rather than overwritten.
     */
    private fun revertInProgressRecord(manager: DownloadManager, store: DownloadStore, path: String) {
       // Synchronized on manager to prevent interleaving with cancel/pause.
       synchronized(manager) {
-         val record = store.findByPath(path) ?: return
+         val record = store.findByPath(path)
+         discardOrphanedPartial(record, File("$path$DOWNLOAD_SUFFIX"))
+         if (record == null) return
          val reverted = DownloadManager.revertInProgress(record, tempFileLength(path)) ?: return
 
          store.update(reverted)
@@ -286,6 +289,7 @@ internal class DownloadWorker(
    private fun handleFailure(manager: DownloadManager, store: DownloadStore, path: String, failure: DownloadFailure): Result {
       synchronized(manager) {
          val record = store.findByPath(path)
+         discardOrphanedPartial(record, File("$path$DOWNLOAD_SUFFIX"))
          when (failureOutcome(failure, runAttemptCount, record?.status, isStopped)) {
             FailureOutcome.Ignore -> { dismissNotification(); return Result.success() }
             FailureOutcome.Revert -> {
@@ -389,6 +393,11 @@ internal class DownloadWorker(
    internal enum class FailureOutcome { Ignore, Revert, Retry, Fail }
 
    companion object {
+      /** A canceled worker may recreate its partial after cancel deleted the record. */
+      internal fun discardOrphanedPartial(record: DownloadRecord?, tempFile: File) {
+         if (record == null) tempFile.delete()
+      }
+
 
       /** Decides recovery without WorkManager or Android runtime dependencies. */
       internal fun failureOutcome(
@@ -468,7 +477,7 @@ internal class DownloadWorker(
       /**
        * What a failed resume means for the partial. The one failure allowed to delete
        * it is a 416: every resume would send the same unsatisfiable Range, and dropping
-       * it reverts to Idle, which start() can run again — unless the 416's
+       * it leaves a Failed record that resume() can restart from zero — unless the 416's
        * `Content-Range` states a total equal to the partial, which is then complete.
        *
        * Built here rather than inline in [doWork], which cannot be reached without
