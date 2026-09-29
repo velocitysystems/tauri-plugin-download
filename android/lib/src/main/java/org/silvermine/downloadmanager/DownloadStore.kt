@@ -245,6 +245,6 @@ internal class DownloadStore(directory: File) {
        * @return The JSON text to persist.
        */
       internal fun encodeRecords(records: List<DownloadRecord>): String =
-            json.encodeToString(StoreDocument(CURRENT_SCHEMA_VERSION, records))
+         json.encodeToString(StoreDocument(CURRENT_SCHEMA_VERSION, records))
    }
 }
