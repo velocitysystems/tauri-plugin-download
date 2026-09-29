@@ -5,7 +5,7 @@ import Foundation
 public struct DownloadFailure: Codable, Sendable, Error, Equatable {
    public let code: String
    public let message: String
-   public let retryability: String
+   internal let retryability: String
    public let httpStatus: Int?
 
    private enum CodingKeys: String, CodingKey {

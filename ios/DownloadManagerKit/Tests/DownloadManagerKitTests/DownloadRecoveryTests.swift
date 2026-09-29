@@ -116,6 +116,40 @@ final class DownloadRecoveryTests: XCTestCase {
       XCTAssertNil(finished)
    }
 
+   func testFinishedFileCompletesAfterPauseOrReconciliation() async throws {
+      for status in [DownloadStatus.inProgress, .paused, .idle, .failed] {
+         let (manager, store, directory) = try await fixture()
+         var original = record(in: directory)
+         original.setStatus(status)
+         let resume = directory.appendingPathComponent("partial.resume")
+         try Data("resume data".utf8).write(to: resume)
+         original.resumeDataPath = resume
+         let staged = directory.appendingPathComponent("staged")
+         try Data("payload".utf8).write(to: staged)
+         await store.append(original)
+         let done = await observe(manager, status: .completed)
+         await manager.handleFinished(path: original.path, location: staged)
+         await fulfillment(of: [done], timeout: 3)
+         XCTAssertEqual(try Data(contentsOf: original.fileURL), Data("payload".utf8))
+         XCTAssertFalse(FileManager.default.fileExists(atPath: resume.path))
+         XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
+         let remaining = await store.findByPath(original.path)
+         XCTAssertNil(remaining)
+      }
+   }
+
+   func testFinishedFileIsDiscardedWhenRecordWasRemoved() async throws {
+      let (manager, store, directory) = try await fixture()
+      let original = record(in: directory)
+      let staged = directory.appendingPathComponent("staged")
+      try Data("payload".utf8).write(to: staged)
+      await manager.handleFinished(path: original.path, location: staged)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
+      XCTAssertFalse(FileManager.default.fileExists(atPath: original.path))
+      let remaining = await store.findByPath(original.path)
+      XCTAssertNil(remaining)
+   }
+
    func testCancelRemovesFailedStagedFile() async throws {
       let (manager, store, directory) = try await fixture()
       let original = record(in: directory)

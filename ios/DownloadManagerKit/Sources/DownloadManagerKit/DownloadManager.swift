@@ -402,7 +402,7 @@ public final class DownloadManager: NSObject {
         stated none.
     */
    func handleFinished(path: String, location: URL, expectedBytes: Int64 = NSURLSessionTransferSizeUnknown) async {
-      guard var record = await store.findByPath(path), record.status == .inProgress else {
+      guard var record = await store.findByPath(path) else {
          try? FileManager.default.removeItem(at: location)
          return
       }
@@ -432,6 +432,8 @@ public final class DownloadManager: NSObject {
 
       record.setBytes(received: receivedBytes, total: totalBytes)
       record.setStatus(.completed)
+      deleteResumeData(for: record)
+      record.setResumeDataPath(nil)
       await store.remove(record)
       await emitChanged(record)
    }
