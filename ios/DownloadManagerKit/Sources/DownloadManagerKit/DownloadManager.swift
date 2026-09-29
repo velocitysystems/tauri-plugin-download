@@ -415,6 +415,9 @@ public final class DownloadManager: NSObject {
 
          if let failed = await store.fail(path: record.path, error: DownloadFailure.classify(error), stagedFilePath: location) {
             await emitChanged(failed)
+         } else {
+            // Cancellation may have removed the record while recording the failure.
+            try? FileManager.default.removeItem(at: location)
          }
 
          return

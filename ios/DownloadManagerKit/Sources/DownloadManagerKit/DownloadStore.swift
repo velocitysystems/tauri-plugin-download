@@ -111,10 +111,11 @@ actor DownloadStore {
       return (downloads[index], true)
    }
 
-   /// Records only failures of active transfers, retaining usable resume or staged data.
+   /// Records active transfer failures, or placement failures of an already-finished
+   /// file even after pause or reconciliation, retaining usable resume or staged data.
    func fail(path: String, error: DownloadFailure, resumeDataPath: URL? = nil, stagedFilePath: URL? = nil) -> DownloadRecord? {
       guard let index = downloads.firstIndex(where: { $0.path == path }),
-            downloads[index].status == .inProgress else { return nil }
+            downloads[index].status == .inProgress || stagedFilePath != nil else { return nil }
       downloads[index].setStatus(.failed)
       downloads[index].error = error
       if let resumeDataPath { downloads[index].resumeDataPath = resumeDataPath }

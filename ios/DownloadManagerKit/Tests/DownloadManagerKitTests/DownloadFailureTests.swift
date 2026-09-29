@@ -101,5 +101,9 @@ final class DownloadFailureTests: XCTestCase {
       await store.remove(record)
       let canceled = await store.fail(path: record.path, error: .http(404))
       XCTAssertNil(canceled)
+      let placement = await store.fail(path: record.path,
+         error: DownloadFailure(code: "file", message: "Cannot place file", retryability: "unknown"),
+         stagedFilePath: directory.appendingPathComponent("staged"))
+      XCTAssertNil(placement)
    }
 }
