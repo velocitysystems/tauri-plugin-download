@@ -22,9 +22,11 @@ public struct DownloadFailure: Codable, Sendable, Error, Equatable {
    public init(from decoder: Decoder) throws {
       let container = try decoder.container(keyedBy: CodingKeys.self)
       let decodedCode = try container.decode(String.self, forKey: .code)
-      code = DownloadFailure.knownCode(decodedCode) ? decodedCode : "unknown"
-      message = try container.decode(String.self, forKey: .message)
-      httpStatus = try container.decodeIfPresent(Int.self, forKey: .httpStatus)
+      let decodedStatus = try container.decodeIfPresent(Int.self, forKey: .httpStatus)
+      code = DownloadFailure.knownCode(decodedCode) && (decodedCode != "http" || decodedStatus != nil)
+         ? decodedCode : "unknown"
+      message = try container.decodeIfPresent(String.self, forKey: .message) ?? "Download failed"
+      httpStatus = code == "http" ? decodedStatus : nil
       retryability = DownloadFailure.retryability(code: code, httpStatus: httpStatus)
    }
 

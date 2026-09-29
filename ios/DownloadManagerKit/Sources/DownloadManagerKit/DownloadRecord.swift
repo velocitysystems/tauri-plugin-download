@@ -92,7 +92,9 @@ struct DownloadRecord: Codable, Sendable {
          totalBytes: totalBytes,
          progress: progress,
          status: status,
-         error: error
+         error: status == .failed
+            ? error ?? DownloadFailure(code: "unknown", message: "Download failed", retryability: "unknown")
+            : nil
       )
    }
 }

@@ -141,7 +141,32 @@ final class DownloadStoreSchemaTests: XCTestCase {
          XCTAssertEqual(try DownloadStore.decodeRecords(from: Data(text.utf8)).count, 2)
          try write(text)
          XCTAssertEqual(DownloadStore.load(from: savePath).count, 2)
+         XCTAssertEqual(DownloadStore.load(from: savePath).last?.toItem().error?.code, "unknown")
          XCTAssertEqual(try Data(contentsOf: savePath), Data(text.utf8))
+      }
+   }
+
+   func testStoredFailuresPreserveRecordsAndPublicErrorShape() throws {
+      let fixture = URL(fileURLWithPath: #filePath)
+         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+         .deletingLastPathComponent().deletingLastPathComponent()
+         .appendingPathComponent("fixtures/stored-failures.json")
+      let cases = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [[String: Any]])
+      for testCase in cases {
+         let good: [String: Any] = ["url": "https://example.com/good", "path": "/tmp/good",
+            "options": ["allowMetered": true], "receivedBytes": 0, "status": "idle"]
+         var failed = good
+         failed["path"] = "/tmp/failed"
+         failed["status"] = "failed"
+         failed["error"] = testCase["error"]
+         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "downloads": [good, failed]])
+         let records = try DownloadStore.decodeRecords(from: data)
+         XCTAssertEqual(records.count, 2)
+         let goodItem = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(records[0].toItem())) as? [String: Any])
+         let failedItem = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(records[1].toItem())) as? [String: Any])
+         XCTAssertNil(goodItem["error"])
+         XCTAssertEqual(failedItem["error"] as? NSDictionary, testCase["expected"] as? NSDictionary)
+         XCTAssertFalse(String(decoding: try JSONEncoder().encode(records), as: UTF8.self).contains("retryability"))
       }
    }
 
