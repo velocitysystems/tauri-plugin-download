@@ -215,7 +215,6 @@ mod tests {
          .unwrap_err();
       let failure = Error::from(error).failure();
       assert_eq!(failure.code, ErrorCode::Timeout);
-      assert_eq!(failure.retryability, crate::Retryability::Transient);
       assert!(!failure.message.contains("private-token"));
       server.verify().await;
    }
@@ -233,7 +232,6 @@ mod tests {
          .unwrap_err();
       let failure = Error::from(error).failure();
       assert_eq!(failure.code, ErrorCode::Connection);
-      assert_eq!(failure.retryability, crate::Retryability::Unknown);
    }
 
    #[tokio::test]
@@ -287,7 +285,6 @@ mod tests {
       server.abort();
       let failure = Error::from(error).failure();
       assert_eq!(failure.code, ErrorCode::Tls);
-      assert_eq!(failure.retryability, crate::Retryability::Permanent);
    }
 
    #[test]

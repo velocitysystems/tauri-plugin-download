@@ -7,7 +7,7 @@ mod store;
 mod validate;
 
 pub use error::{Error, Result};
-pub use failure::{DownloadFailure, ErrorCode, Retryability};
+pub use failure::{DownloadFailure, ErrorCode};
 pub use manager::{DownloadManager, DownloadManagerConfig, OnChanged};
 pub use models::{CreateOptions, DownloadActionResponse, DownloadItem, DownloadStatus};
 pub use store::STORE_FILE_NAME;

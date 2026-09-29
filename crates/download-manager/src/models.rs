@@ -401,6 +401,7 @@ mod tests {
          DownloadStatus::Idle,
          DownloadStatus::InProgress,
          DownloadStatus::Paused,
+         DownloadStatus::Failed,
          DownloadStatus::Canceled,
          DownloadStatus::Completed,
       ];
