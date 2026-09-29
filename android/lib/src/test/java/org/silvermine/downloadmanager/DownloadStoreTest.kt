@@ -10,6 +10,8 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.encodeToString
 import org.junit.Test
 import java.io.File
 
@@ -30,6 +32,23 @@ class DownloadStoreTest {
       totalBytes = 1000L,
       status = DownloadStatus.Paused,
    )
+
+   @Test
+   fun `stored failures preserve records and public error shape`() {
+      val cases = Json.parseToJsonElement(File("../../fixtures/stored-failures.json").readText()).jsonArray
+      val bridgeJson = Json { encodeDefaults = true }
+      for (case in cases) {
+         val failure = case.jsonObject.getValue("error")
+         val text = """{"version":1,"downloads":[{"url":"https://example.com/good","path":"/tmp/good","options":{"allowMetered":true},"receivedBytes":0,"status":"idle"},{"url":"https://example.com/failed","path":"/tmp/failed","options":{"allowMetered":true},"receivedBytes":0,"status":"failed","error":$failure}]}"""
+         val records = DownloadStore.decodeRecords(text)
+         assertEquals(2, records.size)
+         val good = Json.parseToJsonElement(bridgeJson.encodeToString(records.first().toItem())).jsonObject
+         val failed = Json.parseToJsonElement(bridgeJson.encodeToString(records.last().toItem())).jsonObject
+         assertFalse(good.containsKey("error"))
+         assertEquals(case.jsonObject.getValue("expected"), failed["error"])
+         assertFalse(DownloadStore.encodeRecords(records).contains("retryability"))
+      }
+   }
 
    @Test
    fun `a failed record without an error loads leniently`() {

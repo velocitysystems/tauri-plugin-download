@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.intOrNull
 import java.io.File
 
 /** The envelope fields have no defaults so both are always required and written. */
@@ -207,10 +208,34 @@ internal class DownloadStore(directory: File) {
          }
 
          return try {
-            json.decodeFromJsonElement<List<DownloadRecord>>(records)
+            json.decodeFromJsonElement<List<DownloadRecord>>(JsonArray(records.map { element ->
+               val record = element as? JsonObject ?: return@map element
+               JsonObject(record.toMutableMap().apply {
+                  if ((record["status"] as? JsonPrimitive)?.content == "failed") {
+                     val failure = record["error"] as? JsonObject
+                     if (failure != null) put("error", normalizeFailure(failure))
+                  } else {
+                     remove("error")
+                  }
+               })
+            }))
          } catch (_: SerializationException) {
             throw SerializationException("Invalid store records")
          }
+      }
+
+      /** Future codes and missing diagnostics must not invalidate other downloads. */
+      private fun normalizeFailure(failure: JsonObject): JsonObject {
+         val knownCodes = setOf("invalid input", "invalid state", "download not found",
+            "network unavailable", "network restricted", "timeout", "connection", "tls", "http", "file", "store", "unknown")
+         var code = (failure["code"] as? JsonPrimitive)?.content?.takeIf { it in knownCodes } ?: "unknown"
+         val status = (failure["httpStatus"] as? JsonPrimitive)?.intOrNull?.takeIf { it in 0..65535 }
+         if (code == "http" && status == null) code = "unknown"
+         return JsonObject(buildMap {
+            put("code", JsonPrimitive(code))
+            put("message", failure["message"] ?: JsonPrimitive("Download failed"))
+            if (code == "http") put("httpStatus", JsonPrimitive(status))
+         })
       }
 
       /**

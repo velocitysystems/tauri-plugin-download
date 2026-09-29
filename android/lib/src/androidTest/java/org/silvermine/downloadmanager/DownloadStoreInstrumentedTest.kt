@@ -38,7 +38,7 @@ class DownloadStoreInstrumentedTest {
    )
 
    @Test
-   fun firstWriteCreatesConfiguredDirectoryAndReloadsV2() {
+   fun firstWriteCreatesConfiguredDirectoryAndReloadsV1() {
       val nested = File(directory, "nested/store")
       val store = DownloadStore(nested)
       assertTrue(store.list().isEmpty())
@@ -53,7 +53,7 @@ class DownloadStoreInstrumentedTest {
       )
 
       store.remove(record)
-      assertEquals("{\"version\":2,\"downloads\":[]}", DownloadStore.storeFile(nested).readText())
+      assertEquals("{\"version\":1,\"downloads\":[]}", DownloadStore.storeFile(nested).readText())
       assertTrue(DownloadStore(nested).list().isEmpty())
    }
 
@@ -145,13 +145,15 @@ class DownloadStoreInstrumentedTest {
    }
 
    @Test
-   fun failedRecordWithoutErrorDoesNotLoadOtherRecordsOrRewriteStore() {
+   fun failedRecordWithoutErrorLoadsOtherRecordsWithoutRewritingStore() {
       directory.mkdirs()
       val file = DownloadStore.storeFile(directory)
       for (errorField in listOf("", ",\"error\":null")) {
-         val text = """{"version":2,"downloads":[{"url":"https://example.com/good","path":"/tmp/good","options":{"allowMetered":true},"receivedBytes":0,"status":"idle"},{"url":"https://example.com/bad","path":"/tmp/bad","options":{"allowMetered":true},"receivedBytes":0,"status":"failed"$errorField}]}"""
+         val text = """{"version":1,"downloads":[{"url":"https://example.com/good","path":"/tmp/good","options":{"allowMetered":true},"receivedBytes":0,"status":"idle"},{"url":"https://example.com/bad","path":"/tmp/bad","options":{"allowMetered":true},"receivedBytes":0,"status":"failed"$errorField}]}"""
          file.writeText(text)
-         assertTrue(DownloadStore(directory).list().isEmpty())
+         val records = DownloadStore(directory).list()
+         assertEquals(2, records.size)
+         assertEquals("unknown", records.last().toItem().error?.code)
          assertEquals(text, file.readText())
       }
    }

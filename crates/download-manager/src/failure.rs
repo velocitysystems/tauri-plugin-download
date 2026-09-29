@@ -59,6 +59,7 @@ pub enum Retryability {
 #[serde(rename_all = "camelCase")]
 pub struct DownloadFailure {
    pub code: ErrorCode,
+   #[serde(default = "default_failure_message")]
    pub message: String,
    #[serde(skip, default = "default_retryability")]
    pub retryability: Retryability,
@@ -66,14 +67,26 @@ pub struct DownloadFailure {
    pub http_status: Option<u16>,
 }
 
+/// Restored errors do not carry retry policy.
 fn default_retryability() -> Retryability {
    Retryability::Unknown
+}
+
+/// Older or future stores may omit the diagnostic message.
+fn default_failure_message() -> String {
+   "Download failed".into()
 }
 
 impl DownloadFailure {
    /// Builds a command rejection without guessing from its diagnostic message.
    /// File, store and opaque transport errors need more context to advise a retry.
    pub fn command(code: ErrorCode, message: String) -> Self {
+      // Without a response status there is no HTTP failure to expose.
+      let code = if code == ErrorCode::Http {
+         ErrorCode::Unknown
+      } else {
+         code
+      };
       let retryability = match code {
          ErrorCode::InvalidInput | ErrorCode::InvalidState | ErrorCode::DownloadNotFound => {
             Retryability::Permanent

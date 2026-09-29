@@ -84,7 +84,7 @@ export enum DownloadAction {
    Cancel = 'cancel',
 }
 
-export interface DownloadState<S extends DownloadStatus> {
+interface DownloadStateFields {
    url: string;
    path: string;
 
@@ -93,11 +93,14 @@ export interface DownloadState<S extends DownloadStatus> {
    receivedBytes: number;
    totalBytes: number | null;
    progress: number;
-   status: S;
-
-   /** Last transfer failure, cleared when a new attempt is accepted. */
-   error?: DownloadError | null;
 }
+
+/** Only failed downloads carry an error; a new accepted attempt clears it. */
+export type DownloadState<S extends DownloadStatus> = S extends DownloadStatus
+   ? DownloadStateFields & { status: S } & (S extends DownloadStatus.Failed
+      ? { error: DownloadError }
+      : { error?: never })
+   : never;
 
 export interface DownloadActionResponse<A extends DownloadAction = DownloadAction> {
    download: DownloadWithAnyStatus;

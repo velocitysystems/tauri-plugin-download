@@ -150,7 +150,7 @@ mod tests {
       assert_eq!(
          serde_json::from_str::<serde_json::Value>(&json).unwrap(),
          serde_json::json!({
-            "code": "http",
+            "code": "unknown",
             "message": "HTTP Error: connection failed"
          })
       );

@@ -127,7 +127,7 @@ function cloneDownload<S extends DownloadStatus>(download: DownloadState<S>): Do
       ...download,
       options: { ...download.options },
       ...(download.error ? { error: { ...download.error } } : {}),
-   };
+   } as DownloadState<S>;
 }
 
 function cloneDownloads(downloadsByPath: Map<string, DownloadState<DownloadStatus>>): DownloadState<DownloadStatus>[] {
@@ -237,7 +237,7 @@ function getCreateOptionsArg(args: Record<string, unknown>): Required<CreateOpti
 
 function createTransitionDownload(
    currentDownload: DownloadState<DownloadStatus>,
-   nextStatus: DownloadStatus,
+   nextStatus: Exclude<DownloadStatus, DownloadStatus.Failed>,
    url?: string
 ): DownloadState<DownloadStatus> {
    return {
@@ -286,9 +286,11 @@ export function createMockDownloadState(
       receivedBytes,
       totalBytes,
       progress: computedProgress,
-      ...(overrides.error ? { error: { ...overrides.error } } : {}),
+      ...(status === DownloadStatus.Failed ? {
+         error: { ...(overrides.error ?? { code: 'unknown', message: 'Download failed' }) },
+      } : {}),
       status,
-   };
+   } as DownloadState<DownloadStatus>;
 }
 
 /**
@@ -351,11 +353,12 @@ export function mockDownloadPlugin(
                return createNoOpActionResponse(action, currentDownload);
             }
 
-            const createdDownload = {
+            const createdDownload: DownloadState<DownloadStatus.Idle> = {
                ...currentDownload,
                url: getUrlArg(args),
                options: getCreateOptionsArg(args),
                status: DownloadStatus.Idle,
+               error: undefined,
             };
 
             setDownloadForPath(downloadsByPath, createdDownload);

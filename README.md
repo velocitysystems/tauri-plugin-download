@@ -455,7 +455,9 @@ how to use this plugin.
 
 A transfer that ends with an error and no automatic retry remaining becomes
 `Failed`. Its `error` contains `code`, `message`, and an optional
-`httpStatus`. The existing change listener receives the failure and `get()`/`list()`
+`httpStatus`, required only for the `http` code. Only failed downloads carry an
+`error`; other statuses omit it. The existing change listener receives the failure and
+`get()`/`list()`
 return it later, including after restarting the app. Usable partial data is retained.
 
 Call `resume()` to retry a failed download. It clears the old error only when the
@@ -476,7 +478,7 @@ iOS retry counter or new retry scheduler in this change.
 ### Error classification
 
 | Cause | Code |
-| --- | --- | --- |
+| --- | --- |
 | Timeout | `timeout` |
 | Connection loss, DNS lookup, or connection establishment failure | `connection` |
 | TLS failure | `tls` |
@@ -487,13 +489,14 @@ iOS retry counter or new retry scheduler in this change.
 
 The HTTP cases in [the shared fixture](fixtures/http-errors.json) run against Rust,
 Kotlin, and Swift. Classification uses native types, domains, codes and HTTP status,
-never message matching. Android's HTTP and WorkManager retry layers use this same
-classification. The configured limits and backoff are unchanged, but retry eligibility
-changes: connection-establishment failures (`unknown`) stop immediately, while transient
-HTTP failures can use both retry layers. Each WorkManager run permits up to four requests;
+never message matching. Retry policy is internal and is not part of the public error.
+Android's configured limits and backoff are unchanged, but retry eligibility changes:
+connection-establishment failures stop immediately, while HTTP 408, 429, 500,
+502–504, and 506–599 can use both retry layers. Each WorkManager run permits up to
+four requests;
 five WorkManager retries permit up to six runs (24 requests). Constraint interruptions
 can consume that same run budget. Desktop's existing middleware still retries connect
-failures up to three times. A transient failure stays transient after exhausting retries.
+failures up to three times.
 
 ### Command errors
 
@@ -511,18 +514,13 @@ logging and `error.code` for application behavior or localized user messages.
 Validation and missing-record messages keep their existing wording. Other messages
 may contain platform-specific diagnostic text; do not parse them.
 
-| Command error code | Retryability | Platforms |
-| --- | --- | --- |
-| `invalid input` | `permanent` | All |
-| `invalid state` | `permanent` | Desktop, Android |
-| `download not found` | `permanent` | All |
-| `network unavailable`, `network restricted` | `transient` | Desktop; mobile holds transfers instead |
-| `file`, `store`, `unknown` | `unknown` without further cause information | Where produced |
-
-`transient` means another attempt may succeed when conditions improve; it does not
-schedule an automatic retry. `permanent` means repeating the unchanged operation
-is not expected to help. `unknown` means there is insufficient information to advise
-retrying. These values do not indicate whether partial bytes can be resumed.
+| Command error code | Platforms |
+| --- | --- |
+| `invalid input` | All |
+| `invalid state` | Desktop, Android |
+| `download not found` | All |
+| `network unavailable`, `network restricted` | Desktop; mobile holds transfers instead |
+| `file`, `store`, `unknown` | Where produced |
 
 The same error type carries command and transfer failures. `httpStatus` is omitted
 unless an HTTP response status is known; a missing download record is not HTTP 404.
@@ -814,6 +812,10 @@ before decoding records, and ignore unknown fields in supported documents.
 The additive `failed` status and error data remain in version 1. Older plugin
 versions ignore the error field; only stores containing a failed record are not
 readable by an older build. Loading alone does not rewrite the file.
+
+Persisted failures contain `code`, optional `httpStatus`, and diagnostic `message`.
+Unknown error codes load as `unknown`. A failed record with missing error details
+remains recoverable and exposes an `unknown` error; other records are retained.
 
 Old bare arrays, malformed documents, and unsupported versions use the existing
 load-error path: startup continues with an empty store. Loading does not rewrite

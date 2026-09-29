@@ -42,9 +42,21 @@ fn decode_store(data: &[u8]) -> crate::Result<Vec<DownloadRecord>> {
    }
 
    // Keep decoder details out of logs: they can contain URLs and other input values.
-   let records: Vec<DownloadRecord> =
+   let mut records: Vec<DownloadRecord> =
       serde_json::from_value(serde_json::Value::Array(document.downloads))
          .map_err(|_| Error::Store("Invalid store records".to_string()))?;
+   for record in &mut records {
+      if record.status != DownloadStatus::Failed {
+         record.error = None;
+      } else if let Some(error) = &mut record.error {
+         if error.code == crate::ErrorCode::Http && error.http_status.is_none() {
+            error.code = crate::ErrorCode::Unknown;
+         }
+         if error.code != crate::ErrorCode::Http {
+            error.http_status = None;
+         }
+      }
+   }
    Ok(records)
 }
 
@@ -1039,6 +1051,36 @@ mod tests {
    }
 
    #[test]
+   fn test_stored_failures_preserve_records_and_public_error_shape() {
+      let cases: Vec<serde_json::Value> =
+         serde_json::from_str(include_str!("../../../fixtures/stored-failures.json")).unwrap();
+      for case in cases {
+         let good = serde_json::to_value(sample_record("/tmp/good.mp4")).unwrap();
+         let mut failed = serde_json::to_value(sample_record("/tmp/failed.mp4")).unwrap();
+         failed["status"] = serde_json::json!("failed");
+         failed["error"] = case["error"].clone();
+         let bytes = serde_json::to_vec(&serde_json::json!({
+            "version": 1, "downloads": [good, failed]
+         }))
+         .unwrap();
+         let records = decode_store(&bytes).unwrap();
+         assert_eq!(records.len(), 2);
+         assert!(
+            serde_json::to_value(records[0].to_item())
+               .unwrap()
+               .get("error")
+               .is_none()
+         );
+         assert_eq!(
+            serde_json::to_value(records[1].to_item()).unwrap()["error"],
+            case["expected"]
+         );
+         let persisted = serde_json::to_value(&records).unwrap();
+         assert!(persisted[1]["error"].get("retryability").is_none());
+      }
+   }
+
+   #[test]
    fn test_failed_record_without_error_loads_leniently() {
       for explicit_null in [false, true] {
          let (store, dir) = temp_store();
@@ -1062,6 +1104,10 @@ mod tests {
          assert_eq!(records.len(), 2);
          assert_eq!(records[1].status, DownloadStatus::Failed);
          assert!(records[1].error.is_none());
+         assert_eq!(
+            records[1].to_item().error.unwrap().code,
+            crate::ErrorCode::Unknown
+         );
          assert_eq!(fs::read(path).unwrap(), bytes);
       }
    }

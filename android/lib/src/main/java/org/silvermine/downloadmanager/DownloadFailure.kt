@@ -4,6 +4,8 @@ import android.system.ErrnoException
 import android.system.OsConstants
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
@@ -16,11 +18,13 @@ import javax.net.ssl.SSLPeerUnverifiedException
 
 /** Public diagnostic data. Retryability is internal worker policy. */
 @Serializable
+@OptIn(ExperimentalSerializationApi::class)
 data class DownloadFailure(
    val code: String,
    val message: String,
    @Transient
    val retryability: String = "unknown",
+   @EncodeDefault(EncodeDefault.Mode.NEVER)
    val httpStatus: Int? = null,
 ) {
    companion object {

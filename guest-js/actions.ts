@@ -216,8 +216,10 @@ export function attachDownload<S extends DownloadStatus>(state: SerializedDownlo
       totalBytes: state.totalBytes ?? null,
       progress: state.progress ?? 0,
       status: state.status,
-      ...(state.error ? { error: { ...state.error } } : {}),
-   } satisfies DownloadState<S>;
+      ...(state.status === DownloadStatus.Failed ? {
+         error: { ...(state.error ?? { code: 'unknown', message: 'Download failed' }) },
+      } : {}),
+   };
 
    const actionsForDownload = allowedActions[state.status];
 

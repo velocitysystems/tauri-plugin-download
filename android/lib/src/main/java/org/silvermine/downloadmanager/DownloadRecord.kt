@@ -78,7 +78,7 @@ internal data class DownloadRecord(
          totalBytes = totalBytes,
          progress = progress,
          status = status,
-         error = error,
+         error = if (status == DownloadStatus.Failed) error ?: DownloadFailure("unknown", "Download failed") else null,
       )
    }
 }

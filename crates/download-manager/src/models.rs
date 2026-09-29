@@ -147,7 +147,13 @@ impl DownloadRecord {
          total_bytes: self.total_bytes,
          progress,
          status: self.status.clone(),
-         error: self.error.clone(),
+         error: if self.status == DownloadStatus::Failed {
+            Some(self.error.clone().unwrap_or_else(|| {
+               crate::DownloadFailure::command(crate::ErrorCode::Unknown, "Download failed".into())
+            }))
+         } else {
+            None
+         },
       }
    }
 }

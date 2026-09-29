@@ -2,6 +2,8 @@ package org.silvermine.downloadmanager
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 
 /**
  * Emit-only payload sent to the frontend. Built from a [DownloadRecord] with
@@ -16,6 +18,7 @@ import kotlinx.serialization.Serializable
  * [CreateOptions] carries one but marks it `@Required`, so it is written too.
  */
 @Serializable
+@OptIn(ExperimentalSerializationApi::class)
 data class DownloadItem(
    @SerialName("url")
    val url: String,
@@ -38,6 +41,7 @@ data class DownloadItem(
 
    @SerialName("status")
    val status: DownloadStatus,
+   @EncodeDefault(EncodeDefault.Mode.NEVER)
    val error: DownloadFailure? = null,
 
 )
