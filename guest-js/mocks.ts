@@ -317,7 +317,8 @@ export function clearDownloadMocks(): void {
  * Use `emitChange()` to simulate progress updates or terminal states, or
  * `setDownload()` to seed a stored state without emitting an event.
  * As on the native platforms, `start`, `resume`, `pause` and `cancel` reject with
- * `Not Found: <path>` for a path with no stored download.
+ * `{ code: 'download not found', message: 'Not Found: <path>' }` for a path
+ * with no stored download.
  *
  * @param options Initial mocked download state.
  * @return Controller for inspecting invocations and mutating mocked download state.

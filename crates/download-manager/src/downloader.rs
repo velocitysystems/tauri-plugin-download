@@ -544,8 +544,7 @@ mod tests {
    #[tokio::test]
    async fn test_resume_discards_the_partial_when_the_range_is_not_satisfiable() {
       // No Content-Range confirms the partial is complete, so it is discarded. With no
-      // temp file, revert_in_progress lands on Idle, as
-      // test_init_reverts_in_progress_without_temp_file_to_idle shows.
+      // temp file, fail_in_progress retains a Failed record and resume restarts from zero.
       let fixture = make_fixture();
       let server = MockServer::start().await;
 
