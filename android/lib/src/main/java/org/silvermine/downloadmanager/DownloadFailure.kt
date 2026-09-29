@@ -2,9 +2,8 @@ package org.silvermine.downloadmanager
 
 import android.system.ErrnoException
 import android.system.OsConstants
-import kotlinx.serialization.EncodeDefault
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
@@ -15,14 +14,13 @@ import javax.net.ssl.SSLException
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
 
-/** Public diagnostic data, also persisted with failed downloads. */
-@OptIn(ExperimentalSerializationApi::class)
+/** Public diagnostic data. Retryability is internal worker policy. */
 @Serializable
 data class DownloadFailure(
    val code: String,
    val message: String,
-   val retryability: String,
-   @EncodeDefault(EncodeDefault.Mode.NEVER)
+   @Transient
+   val retryability: String = "unknown",
    val httpStatus: Int? = null,
 ) {
    companion object {

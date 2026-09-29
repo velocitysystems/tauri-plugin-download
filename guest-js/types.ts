@@ -15,20 +15,23 @@ export type DownloadErrorCode =
    | 'store'
    | 'unknown';
 
-/** Advice about repeating an unchanged operation, independent of partial-file support. */
-export type DownloadRetryability = 'transient' | 'permanent' | 'unknown';
-
 /**
  * Rejected plugin commands return this plain object, not an Error instance.
  * The network unavailable/restricted codes are desktop-only: mobile holds transfers.
- * Unknown retryability means the plugin cannot reliably advise whether retry helps.
  */
-export interface DownloadError {
-   code: DownloadErrorCode;
+export interface DownloadNonHttpError {
+   code: Exclude<DownloadErrorCode, 'http'>;
    message: string;
-   retryability: DownloadRetryability;
-   httpStatus?: number;
+   httpStatus?: never;
 }
+
+export interface DownloadHttpError {
+   code: 'http';
+   message: string;
+   httpStatus: number;
+}
+
+export type DownloadError = DownloadNonHttpError | DownloadHttpError;
 
 
 /**

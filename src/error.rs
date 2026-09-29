@@ -91,7 +91,7 @@ mod mobile_error {
          assert_eq!(
             to_value(Rejection::Transfer(&error)).unwrap(),
             json!({
-               "code": "http", "message": "HTTP 429", "retryability": "transient", "httpStatus": 429
+               "code": "http", "message": "HTTP 429", "httpStatus": 429
             })
          );
       }
@@ -102,7 +102,7 @@ mod mobile_error {
          assert_eq!(
             to_value(Rejection::DownloadManager(&error)).unwrap(),
             json!({
-               "code": "download not found", "message": "Not Found: /tmp/missing", "retryability": "permanent"
+               "code": "download not found", "message": "Not Found: /tmp/missing"
             })
          );
       }
@@ -113,7 +113,7 @@ mod mobile_error {
          assert_eq!(
             to_value(Rejection::Io(&error)).unwrap(),
             json!({
-               "code": "file", "message": "access denied", "retryability": "permanent"
+               "code": "file", "message": "access denied"
             })
          );
       }
@@ -128,7 +128,7 @@ mod mobile_error {
             assert_eq!(
                to_value(Rejection::InvokeRejected(message)).unwrap(),
                json!({
-                  "code": "unknown", "message": expected, "retryability": "unknown"
+                  "code": "unknown", "message": expected
                })
             );
          }
@@ -148,7 +148,7 @@ mod mobile_error {
             assert_eq!(
                to_value(Rejection::PluginInvoke(&message)).unwrap(),
                json!({
-                  "code": "unknown", "message": message, "retryability": "unknown"
+                  "code": "unknown", "message": message
                })
             );
          }

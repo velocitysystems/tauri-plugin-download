@@ -454,7 +454,7 @@ how to use this plugin.
 ### Download failures
 
 A transfer that ends with an error and no automatic retry remaining becomes
-`Failed`. Its `error` contains `code`, `message`, `retryability`, and an optional
+`Failed`. Its `error` contains `code`, `message`, and an optional
 `httpStatus`. The existing change listener receives the failure and `get()`/`list()`
 return it later, including after restarting the app. Usable partial data is retained.
 
@@ -475,18 +475,15 @@ iOS retry counter or new retry scheduler in this change.
 
 ### Error classification
 
-| Cause | Code | Retryability |
+| Cause | Code |
 | --- | --- | --- |
-| Timeout | `timeout` | `transient` |
-| Established connection lost/reset | `connection` | `transient` |
-| DNS lookup or connection establishment failure | `connection` | `unknown` |
-| Invalid/untrusted/expired certificate | `tls` | `permanent` |
-| Other TLS transport failure | `tls` | `transient` |
-| HTTP 408, 429, 500, 502–504, 506–599 | `http` | `transient` |
-| Other unsuccessful HTTP status, including 401, 403, 404, 501, 505 | `http` | `permanent` |
-| Disk full, denied file permission, invalid/missing file path, read-only filesystem | `file` | `permanent` when the native cause is available |
-| Other file/store errors without a known cause | `file` / `store` | `unknown` |
-| Unmapped native error | `unknown` | `unknown` |
+| Timeout | `timeout` |
+| Connection loss, DNS lookup, or connection establishment failure | `connection` |
+| TLS failure | `tls` |
+| Any unsuccessful HTTP status | `http` |
+| File failure | `file` |
+| Store failure | `store` |
+| Unmapped native error | `unknown` |
 
 The HTTP cases in [the shared fixture](fixtures/http-errors.json) run against Rust,
 Kotlin, and Swift. Classification uses native types, domains, codes and HTTP status,
@@ -505,8 +502,7 @@ Rejected plugin operations return a plain `DownloadError` object instead of a st
 ```ts
 {
    code: 'invalid input',
-   message: 'Path Error: path must be inside a download directory',
-   retryability: 'permanent'
+   message: 'Path Error: path must be inside a download directory'
 }
 ```
 
@@ -558,9 +554,9 @@ does not exist yet, seed nothing and `get()` returns it as `Pending`.
 It only simulates the desktop event path and returns `false` for `is_native`,
 so tests for the native/mobile listener branch need a separate approach.
 As on the native platforms, `start`, `resume`, `pause` and `cancel` reject with
-`{ code: 'download not found', message: 'Not Found: <path>', retryability: 'permanent' }`
+`{ code: 'download not found', message: 'Not Found: <path>' }`
 for a path with no stored download. String and `Error` values passed to
-`setCommandError()` become structured errors with code and retryability `unknown`;
+`setCommandError()` become structured errors with code `unknown`;
 passing a `DownloadError` preserves its classification.
 
 `createMockDownloadState()` computes `progress` from `receivedBytes` and
@@ -805,7 +801,7 @@ Desktop, Android, and iOS persist `downloads.json` with this envelope:
 
 ```json
 {
-   "version": 2,
+   "version": 1,
    "downloads": []
 }
 ```
@@ -815,10 +811,9 @@ Desktop, Android, and iOS persist `downloads.json` with this envelope:
 required, including for an empty store. Readers validate the envelope and version
 before decoding records, and ignore unknown fields in supported documents.
 
-Readers accept v1 and v2. Existing v1 records load without an error, retain their
-bytes and options, and are written as v2 on the next save; loading alone does not
-rewrite the file. v2 adds the `failed` status and error data. Older plugin versions
-cannot read v2, so downgrading requires restoring a v1 backup.
+The additive `failed` status and error data remain in version 1. Older plugin
+versions ignore the error field; only stores containing a failed record are not
+readable by an older build. Loading alone does not rewrite the file.
 
 Old bare arrays, malformed documents, and unsupported versions use the existing
 load-error path: startup continues with an empty store. Loading does not rewrite
@@ -835,7 +830,7 @@ There is no migration from the old array format.
 On iOS, the default store directory is Application Support. Older development
 builds used Documents; files there are not imported automatically. Clean up the
 effective directory used by the build being tested. iOS records retain their
-optional `resumeDataPath`. v2 also retains a `stagedFilePath` when placing a
+optional `resumeDataPath`, and retain a `stagedFilePath` when placing a
 completed download at its destination failed, so `resume()` can retry that move.
 
 ### Store Tests

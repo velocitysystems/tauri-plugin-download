@@ -175,16 +175,12 @@ mod native_response_tests {
    fn preserves_native_error_metadata_and_successful_null() {
       let response: NativeResponse<()> = serde_json::from_value(serde_json::json!({
          "__downloadError": {
-            "code": "http", "message": "HTTP 429", "retryability": "transient", "httpStatus": 429
+            "code": "http", "message": "HTTP 429", "httpStatus": 429
          }
       }))
       .unwrap();
       let error = response.into_result().unwrap_err();
       assert_eq!(error.http_status, Some(429));
-      assert_eq!(
-         error.retryability,
-         download_manager::Retryability::Transient
-      );
       let success: NativeResponse<()> = serde_json::from_str("null").unwrap();
       assert!(success.into_result().is_ok());
    }

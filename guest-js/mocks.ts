@@ -150,7 +150,7 @@ function createPendingDownload(path: string): DownloadState<DownloadStatus.Pendi
 
 function normalizeError(error: Error | string | DownloadError): DownloadError {
    if (typeof error === 'string' || error instanceof Error) {
-      return { code: 'unknown', message: typeof error === 'string' ? error : error.message, retryability: 'unknown' };
+      return { code: 'unknown', message: typeof error === 'string' ? error : error.message };
    }
    return { ...error };
 }
@@ -342,7 +342,7 @@ export function mockDownloadPlugin(
 
       // As on the native platforms, only `create` accepts a path with no stored download.
       if (action !== DownloadAction.Create && !downloadsByPath.has(path)) {
-         throw normalizeError({ code: 'download not found', message: `Not Found: ${path}`, retryability: 'permanent' });
+         throw normalizeError({ code: 'download not found', message: `Not Found: ${path}` });
       }
 
       switch (action) {

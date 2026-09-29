@@ -32,11 +32,12 @@ class DownloadStoreTest {
    )
 
    @Test
-   fun `a failed record without an error rejects the whole document`() {
+   fun `a failed record without an error loads leniently`() {
       for (errorField in listOf("", ",\"error\":null")) {
-         val text = """{"version":2,"downloads":[{"url":"https://example.com/good","path":"/tmp/good","options":{"allowMetered":true},"receivedBytes":0,"status":"idle"},{"url":"https://example.com/bad","path":"/tmp/bad","options":{"allowMetered":true},"receivedBytes":0,"status":"failed"$errorField}]}"""
-         val error = assertThrows(SerializationException::class.java) { DownloadStore.decodeRecords(text) }
-         assertEquals("Invalid store records", error.message)
+         val text = """{"version":1,"downloads":[{"url":"https://example.com/good","path":"/tmp/good","options":{"allowMetered":true},"receivedBytes":0,"status":"idle"},{"url":"https://example.com/bad","path":"/tmp/bad","options":{"allowMetered":true},"receivedBytes":0,"status":"failed"$errorField}]}"""
+         val records = DownloadStore.decodeRecords(text)
+         assertEquals(2, records.size)
+         assertNull(records.last().error)
       }
    }
 
@@ -161,7 +162,7 @@ class DownloadStoreTest {
          val error = assertThrows(SerializationException::class.java) {
             DownloadStore.decodeRecords("""{"version":$version,"downloads":[{"future":"record"}]}""")
          }
-         assertEquals("Unsupported store version: $version (expected 2)", error.message)
+         assertEquals("Unsupported store version: $version (expected 1)", error.message)
       }
    }
 
@@ -194,7 +195,7 @@ class DownloadStoreTest {
    fun `writes both envelope fields even for an empty store`() {
       val encoded = DownloadStore.encodeRecords(emptyList())
       assertEquals(
-         Json.parseToJsonElement("""{"version":2,"downloads":[]}"""),
+         Json.parseToJsonElement("""{"version":1,"downloads":[]}"""),
          Json.parseToJsonElement(encoded),
       )
       assertTrue(DownloadStore.decodeRecords(encoded).isEmpty())
@@ -208,7 +209,7 @@ class DownloadStoreTest {
       )
 
       val encoded = DownloadStore.encodeRecords(records)
-      assertEquals(JsonPrimitive(2), Json.parseToJsonElement(encoded).jsonObject["version"])
+      assertEquals(JsonPrimitive(1), Json.parseToJsonElement(encoded).jsonObject["version"])
       val decoded = DownloadStore.decodeRecords(encoded)
 
       assertEquals(records, decoded)

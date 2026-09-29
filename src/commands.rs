@@ -166,8 +166,7 @@ mod tests {
             serde_json::to_value(error).unwrap(),
             serde_json::json!({
                "code": "invalid input",
-               "message": message,
-               "retryability": "permanent"
+               "message": message
             })
          );
       }

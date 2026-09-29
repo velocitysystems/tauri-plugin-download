@@ -51,9 +51,9 @@ class DownloadFailureTest {
       val failure = DownloadFailure.http(503)
       val failed = active.failed(failure, 123L)!!
       val reloaded = DownloadStore.decodeRecords(DownloadStore.encodeRecords(listOf(failed))).single()
-      assertEquals(failed, reloaded)
+      assertEquals(failed.copy(error = failed.error?.copy(retryability = "unknown")), reloaded)
       assertEquals(123L, reloaded.receivedBytes)
-      assertEquals(failure, reloaded.toItem().error)
+      assertEquals(failure.copy(retryability = "unknown"), reloaded.toItem().error)
       assertNull(DownloadManager.revertInProgress(reloaded, 123L))
       assertNull(reloaded.withStatus(DownloadStatus.InProgress).error)
       assertNull(reloaded.withStatus(DownloadStatus.Canceled).error)
@@ -62,11 +62,11 @@ class DownloadFailureTest {
    }
 
    @Test
-   fun `v1 records load without errors and write as v2`() {
+   fun `v1 records load without errors and write as v1`() {
       val text = """{"version":1,"downloads":[{"url":"https://example.com/file","path":"/tmp/file","options":{"allowMetered":false},"receivedBytes":123,"status":"paused"}]}"""
       val records = DownloadStore.decodeRecords(text)
       assertNull(records.single().error)
       assertEquals(123L, records.single().receivedBytes)
-      assertEquals(2, Json.parseToJsonElement(DownloadStore.encodeRecords(records)).jsonObject.getValue("version").jsonPrimitive.int)
+      assertEquals(1, Json.parseToJsonElement(DownloadStore.encodeRecords(records)).jsonObject.getValue("version").jsonPrimitive.int)
    }
 }

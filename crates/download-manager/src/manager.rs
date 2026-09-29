@@ -1712,7 +1712,14 @@ mod tests {
       reloaded.load().unwrap();
       let record = reloaded.find_by_path(&path).unwrap().unwrap();
       assert_eq!(record.status, DownloadStatus::Failed);
-      assert_eq!(record.error, Some(failure));
+      assert_eq!(
+         record.error.as_ref().map(|error| error.code),
+         Some(failure.code)
+      );
+      assert_eq!(
+         record.error.as_ref().and_then(|error| error.http_status),
+         failure.http_status
+      );
       assert_eq!(record.received_bytes, 3);
       let (first, second) = tokio::join!(manager.resume(&path), manager.resume(&path));
       assert!(first.unwrap().download.error.is_none());

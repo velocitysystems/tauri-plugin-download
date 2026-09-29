@@ -252,7 +252,6 @@ describe('download actions', () => {
       const error: DownloadError = {
          code: 'network unavailable',
          message: 'Network unavailable: no active connection',
-         retryability: 'transient',
       };
 
       mockIPC(() => { return Promise.reject(error); });

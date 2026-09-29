@@ -9,7 +9,7 @@ use tempfile::NamedTempFile;
 use crate::Error;
 use crate::models::{DownloadRecord, DownloadStatus};
 
-const CURRENT_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 /// The file the store keeps inside the configured store directory.
 ///
@@ -17,8 +17,7 @@ const CURRENT_SCHEMA_VERSION: u32 = 2;
 /// reach cannot drift from the manager that writes it.
 pub const STORE_FILE_NAME: &str = "downloads.json";
 
-/// Private on-disk format. Record types and migrations are introduced only when
-/// v2 adds failure status and error data; v1 records load with no error.
+/// Private on-disk format. Additive record fields remain compatible with v1.
 #[derive(Serialize, Deserialize)]
 struct StoreDocument<T> {
    version: u32,
@@ -26,7 +25,7 @@ struct StoreDocument<T> {
 }
 
 /// Decode records after validating the store envelope and supported schema version.
-/// Reject the whole document on invalid records, using errors that omit input data.
+/// Unknown error codes become `unknown` so future versions do not discard a store.
 fn decode_store(data: &[u8]) -> crate::Result<Vec<DownloadRecord>> {
    // Require an object explicitly: serde can also deserialize structs from arrays.
    let fields: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(data)
@@ -35,7 +34,7 @@ fn decode_store(data: &[u8]) -> crate::Result<Vec<DownloadRecord>> {
       serde_json::from_value(serde_json::Value::Object(fields))
          .map_err(|_| Error::Store("Malformed store envelope".to_string()))?;
 
-   if document.version != 1 && document.version != CURRENT_SCHEMA_VERSION {
+   if document.version != CURRENT_SCHEMA_VERSION {
       return Err(Error::Store(format!(
          "Unsupported store version: {} (expected {})",
          document.version, CURRENT_SCHEMA_VERSION
@@ -46,12 +45,6 @@ fn decode_store(data: &[u8]) -> crate::Result<Vec<DownloadRecord>> {
    let records: Vec<DownloadRecord> =
       serde_json::from_value(serde_json::Value::Array(document.downloads))
          .map_err(|_| Error::Store("Invalid store records".to_string()))?;
-   if records
-      .iter()
-      .any(|record| record.status == DownloadStatus::Failed && record.error.is_none())
-   {
-      return Err(Error::Store("Invalid store records".to_string()));
-   }
    Ok(records)
 }
 
@@ -922,7 +915,7 @@ mod tests {
    }
 
    #[test]
-   fn test_writer_emits_v2_and_round_trips_all_record_fields() {
+   fn test_writer_emits_v1_and_round_trips_all_record_fields() {
       let (store, dir) = temp_store();
       let mut item = sample_record("/tmp/file.mp4");
       item.options.allow_metered = false;
@@ -933,7 +926,7 @@ mod tests {
 
       let bytes = fs::read(dir.path().join("downloads.json")).unwrap();
       let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-      assert_eq!(document["version"], serde_json::json!(2));
+      assert_eq!(document["version"], serde_json::json!(1));
       assert_eq!(document["downloads"], serde_json::json!([item]));
       assert_eq!(
          serde_json::to_value(decode_store(&bytes).unwrap()).unwrap(),
@@ -944,7 +937,7 @@ mod tests {
       let bytes = fs::read(dir.path().join("downloads.json")).unwrap();
       assert_eq!(
          serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
-         serde_json::json!({ "version": 2, "downloads": [] })
+         serde_json::json!({ "version": 1, "downloads": [] })
       );
       assert!(decode_store(&bytes).unwrap().is_empty());
    }
@@ -1001,7 +994,7 @@ mod tests {
          let text = format!(r#"{{"version":{version},"downloads":[{{"future":"record"}}]}}"#);
          assert!(
             matches!(decode_store(text.as_bytes()), Err(Error::Store(message))
-            if message == format!("Unsupported store version: {version} (expected 2)"))
+            if message == format!("Unsupported store version: {version} (expected 1)"))
          );
       }
    }
@@ -1046,7 +1039,7 @@ mod tests {
    }
 
    #[test]
-   fn test_failed_record_without_error_rejects_whole_store() {
+   fn test_failed_record_without_error_loads_leniently() {
       for explicit_null in [false, true] {
          let (store, dir) = temp_store();
          store.create(sample_record("/tmp/existing.mp4")).unwrap();
@@ -1059,17 +1052,16 @@ mod tests {
             bad.as_object_mut().unwrap().remove("error");
          }
          let bytes = serde_json::to_vec(&serde_json::json!({
-            "version": 2, "downloads": [good, bad]
+            "version": 1, "downloads": [good, bad]
          }))
          .unwrap();
          let path = dir.path().join("downloads.json");
          fs::write(&path, &bytes).unwrap();
-         assert!(
-            matches!(store.load(), Err(Error::Store(message)) if message == "Invalid store records")
-         );
+         store.load().unwrap();
          let records = store.list().unwrap();
-         assert_eq!(records.len(), 1);
-         assert_eq!(records[0].path, "/tmp/existing.mp4");
+         assert_eq!(records.len(), 2);
+         assert_eq!(records[1].status, DownloadStatus::Failed);
+         assert!(records[1].error.is_none());
          assert_eq!(fs::read(path).unwrap(), bytes);
       }
    }

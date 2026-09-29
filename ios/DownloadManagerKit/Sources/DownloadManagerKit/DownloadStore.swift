@@ -7,7 +7,7 @@ import CoreFoundation
 import Foundation
 import os.log
 
-private let currentSchemaVersion: UInt32 = 2
+private let currentSchemaVersion: UInt32 = 1
 
 private enum StoreDecodingError: LocalizedError {
    case malformedEnvelope
@@ -37,7 +37,7 @@ private func validateVersionToken(in data: Data) throws {
    else { throw StoreDecodingError.malformedEnvelope }
 }
 
-/// v1 records decode with absent optional error/staged-file fields; all writes use v2.
+/// Additive record fields remain compatible with v1.
 private struct StoreDocument: Codable {
    let version: UInt32
    let downloads: [DownloadRecord]
@@ -62,14 +62,11 @@ private struct StoreDocument: Codable {
          throw StoreDecodingError.malformedEnvelope
       }
 
-      guard version == 1 || version == currentSchemaVersion else {
+      guard version == currentSchemaVersion else {
          throw StoreDecodingError.unsupportedVersion(version)
       }
       do {
          downloads = try container.decode([DownloadRecord].self, forKey: .downloads)
-         guard !downloads.contains(where: { $0.status == .failed && $0.error == nil }) else {
-            throw StoreDecodingError.invalidRecords
-         }
       } catch {
          throw StoreDecodingError.invalidRecords
       }

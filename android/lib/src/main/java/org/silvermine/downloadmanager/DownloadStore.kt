@@ -157,7 +157,7 @@ internal class DownloadStore(directory: File) {
    companion object {
       private const val TAG = "DownloadStore"
       private const val STORE_FILENAME = "downloads.json"
-      private const val CURRENT_SCHEMA_VERSION = 2
+      private const val CURRENT_SCHEMA_VERSION = 1
 
       /**
        * Resolves the store file inside a directory.
@@ -202,16 +202,12 @@ internal class DownloadStore(directory: File) {
          if (version == null || records == null) {
             throw SerializationException("Malformed store envelope")
          }
-         if (version != 1L && version != CURRENT_SCHEMA_VERSION.toLong()) {
+         if (version != CURRENT_SCHEMA_VERSION.toLong()) {
             throw SerializationException("Unsupported store version: $version (expected $CURRENT_SCHEMA_VERSION)")
          }
 
          return try {
-            json.decodeFromJsonElement<List<DownloadRecord>>(records).also { decoded ->
-            if (decoded.any { it.status == DownloadStatus.Failed && it.error == null }) {
-               throw SerializationException("Invalid store records")
-            }
-         }
+            json.decodeFromJsonElement<List<DownloadRecord>>(records)
          } catch (_: SerializationException) {
             throw SerializationException("Invalid store records")
          }
@@ -224,6 +220,6 @@ internal class DownloadStore(directory: File) {
        * @return The JSON text to persist.
        */
       internal fun encodeRecords(records: List<DownloadRecord>): String =
-         json.encodeToString(StoreDocument(CURRENT_SCHEMA_VERSION, records))
+            json.encodeToString(StoreDocument(CURRENT_SCHEMA_VERSION, records))
    }
 }

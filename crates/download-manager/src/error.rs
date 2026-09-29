@@ -151,43 +151,30 @@ mod tests {
          serde_json::from_str::<serde_json::Value>(&json).unwrap(),
          serde_json::json!({
             "code": "http",
-            "message": "HTTP Error: connection failed",
-            "retryability": "unknown"
+            "message": "HTTP Error: connection failed"
          })
       );
    }
 
    #[test]
-   fn command_rejections_have_stable_codes_and_retry_advice() {
-      use crate::Retryability::{Permanent, Transient, Unknown};
-      for (error, code, retryability) in [
-         (Error::InvalidState, "invalid state", Permanent),
-         (
-            Error::NotFound("/tmp/a".into()),
-            "download not found",
-            Permanent,
-         ),
-         (Error::Url("bad URL".into()), "invalid input", Permanent),
-         (Error::Path("bad path".into()), "invalid input", Permanent),
-         (
-            Error::UserAgent("bad agent".into()),
-            "invalid input",
-            Permanent,
-         ),
-         (Error::NetworkUnavailable, "network unavailable", Transient),
-         (Error::NetworkRestricted, "network restricted", Transient),
-         (Error::File("timeout".into()), "file", Unknown),
-         (Error::Store("HTTP 404".into()), "store", Unknown),
-         (Error::Internal("timeout".into()), "unknown", Unknown),
-         (Error::Connectivity("offline".into()), "unknown", Unknown),
+   fn command_rejections_have_stable_codes() {
+      for (error, code) in [
+         (Error::InvalidState, "invalid state"),
+         (Error::NotFound("/tmp/a".into()), "download not found"),
+         (Error::Url("bad URL".into()), "invalid input"),
+         (Error::Path("bad path".into()), "invalid input"),
+         (Error::UserAgent("bad agent".into()), "invalid input"),
+         (Error::NetworkUnavailable, "network unavailable"),
+         (Error::NetworkRestricted, "network restricted"),
+         (Error::File("timeout".into()), "file"),
+         (Error::Store("HTTP 404".into()), "store"),
+         (Error::Internal("timeout".into()), "unknown"),
+         (Error::Connectivity("offline".into()), "unknown"),
       ] {
          let value = serde_json::to_value(&error).unwrap();
          assert_eq!(value["code"], code);
          assert_eq!(value["message"], error.to_string());
-         assert_eq!(
-            value["retryability"],
-            serde_json::to_value(retryability).unwrap()
-         );
+         assert!(value.get("retryability").is_none());
          assert!(value.get("httpStatus").is_none());
       }
    }

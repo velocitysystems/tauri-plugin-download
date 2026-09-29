@@ -277,7 +277,7 @@ describe('mockDownloadPlugin', () => {
          throw new Error('expected start action');
       }
 
-      await expect(download.start()).rejects.toEqual({ code: 'unknown', message: 'start failed', retryability: 'unknown' });
+      await expect(download.start()).rejects.toEqual({ code: 'unknown', message: 'start failed' });
 
       controller.clearCommandError('start');
 
@@ -290,7 +290,7 @@ describe('mockDownloadPlugin', () => {
    it('preserves structured command failure details', async () => {
       const controller = mockDownloadPlugin();
 
-      const error = { code: 'http', message: 'HTTP 429', retryability: 'transient', httpStatus: 429 } as const;
+      const error = { code: 'http', message: 'HTTP 429', httpStatus: 429 } as const;
 
       controller.setCommandError('start', error);
       await expect(invokeAction(DownloadAction.Start, '/tmp/error.zip')).rejects.toEqual(error);
@@ -383,7 +383,7 @@ describe('mockDownloadPlugin', () => {
       mockDownloadPlugin();
 
       await expect(invokeAction(action, '/tmp/missing.zip')).rejects.toEqual({
-         code: 'download not found', message: 'Not Found: /tmp/missing.zip', retryability: 'permanent',
+         code: 'download not found', message: 'Not Found: /tmp/missing.zip',
       });
    });
 
@@ -423,7 +423,7 @@ describe('mockDownloadPlugin', () => {
 
 describe('failed downloads', () => {
    it('retains errors in list/get and clears them on resume', async () => {
-      const error = { code: 'http', message: 'HTTP 503', retryability: 'transient', httpStatus: 503 } as const;
+      const error = { code: 'http', message: 'HTTP 503', httpStatus: 503 } as const;
 
       const failed = createMockDownloadState(DownloadStatus.Failed, { error });
 
@@ -456,7 +456,7 @@ describe('failed downloads', () => {
       }
       await download.listen(listener, { autoUnlisten: true });
       await controller.emitChange(createMockDownloadState(DownloadStatus.Failed, {
-         error: { code: 'timeout', message: 'timeout', retryability: 'transient' },
+         error: { code: 'timeout', message: 'timeout' },
       }));
       await controller.emitChange(createMockDownloadState(DownloadStatus.InProgress));
       await controller.emitChange(createMockDownloadState(DownloadStatus.Completed));

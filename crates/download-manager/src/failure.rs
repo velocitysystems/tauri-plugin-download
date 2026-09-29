@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Stable machine-readable categories shared by command and transfer errors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ErrorCode {
    #[serde(rename = "invalid input")]
@@ -23,6 +23,28 @@ pub enum ErrorCode {
    Unknown,
 }
 
+impl<'de> Deserialize<'de> for ErrorCode {
+   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+   where
+      D: Deserializer<'de>,
+   {
+      Ok(match String::deserialize(deserializer)?.as_str() {
+         "invalid input" => Self::InvalidInput,
+         "invalid state" => Self::InvalidState,
+         "download not found" => Self::DownloadNotFound,
+         "network unavailable" => Self::NetworkUnavailable,
+         "network restricted" => Self::NetworkRestricted,
+         "timeout" => Self::Timeout,
+         "connection" => Self::Connection,
+         "tls" => Self::Tls,
+         "http" => Self::Http,
+         "file" => Self::File,
+         "store" => Self::Store,
+         _ => Self::Unknown,
+      })
+   }
+}
+
 /// Advice about repeating the unchanged operation, independent of resume support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,15 +54,20 @@ pub enum Retryability {
    Unknown,
 }
 
-/// Serializable public error. Messages are diagnostic; consumers branch on codes.
+/// Public error data. Retryability remains internal policy, not a wire or store field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadFailure {
    pub code: ErrorCode,
    pub message: String,
+   #[serde(skip, default = "default_retryability")]
    pub retryability: Retryability,
    #[serde(skip_serializing_if = "Option::is_none")]
    pub http_status: Option<u16>,
+}
+
+fn default_retryability() -> Retryability {
+   Retryability::Unknown
 }
 
 impl DownloadFailure {
@@ -183,7 +210,6 @@ mod tests {
          let status = case["status"].as_u64().unwrap() as u16;
          let failure = serde_json::to_value(DownloadFailure::http(status)).unwrap();
          assert_eq!(failure["code"], "http");
-         assert_eq!(failure["retryability"], case["retryability"]);
          assert_eq!(failure["httpStatus"], status);
       }
    }
