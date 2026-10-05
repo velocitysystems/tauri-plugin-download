@@ -1,0 +1,7 @@
+[
+   { "error": null, "expected": { "code": "unknown", "message": "Download failed" } },
+   { "error": { "code": "future code", "message": "Future failure", "httpStatus": 503 }, "expected": { "code": "unknown", "message": "Future failure" } },
+   { "error": { "code": "http", "httpStatus": 503 }, "expected": { "code": "http", "message": "Download failed", "httpStatus": 503 } },
+   { "error": { "code": "http", "message": "No status" }, "expected": { "code": "unknown", "message": "No status" } },
+   { "error": { "code": "file", "message": "File failure", "httpStatus": 404 }, "expected": { "code": "file", "message": "File failure" } }
+]

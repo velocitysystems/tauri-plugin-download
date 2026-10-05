@@ -1,5 +1,38 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
+/** Stable categories for rejected plugin commands. Messages are diagnostic text. */
+export type DownloadErrorCode =
+   | 'invalid input'
+   | 'invalid state'
+   | 'download not found'
+   | 'network unavailable'
+   | 'network restricted'
+   | 'timeout'
+   | 'connection'
+   | 'tls'
+   | 'http'
+   | 'file'
+   | 'store'
+   | 'unknown';
+
+/**
+ * Rejected plugin commands return this plain object, not an Error instance.
+ * The network unavailable/restricted codes are desktop-only: mobile holds transfers.
+ */
+export interface DownloadNonHttpError {
+   code: Exclude<DownloadErrorCode, 'http'>;
+   message: string;
+   httpStatus?: never;
+}
+
+export interface DownloadHttpError {
+   code: 'http';
+   message: string;
+   httpStatus: number;
+}
+
+export type DownloadError = DownloadNonHttpError | DownloadHttpError;
+
 
 /**
  * Represents the status of a download operation.
@@ -32,6 +65,9 @@ export enum DownloadStatus {
    /** Download was in progress but has been paused. */
    Paused = 'paused',
 
+   /** Transfer failed; resume retries it and cancel discards it. */
+   Failed = 'failed',
+
    /** Download was canceled by the user. */
    Canceled = 'canceled',
 
@@ -48,7 +84,7 @@ export enum DownloadAction {
    Cancel = 'cancel',
 }
 
-export interface DownloadState<S extends DownloadStatus> {
+interface DownloadStateFields {
    url: string;
    path: string;
 
@@ -57,8 +93,14 @@ export interface DownloadState<S extends DownloadStatus> {
    receivedBytes: number;
    totalBytes: number | null;
    progress: number;
-   status: S;
 }
+
+/** Only failed downloads carry an error; a new accepted attempt clears it. */
+export type DownloadState<S extends DownloadStatus> = S extends DownloadStatus
+   ? DownloadStateFields & { status: S } & (S extends DownloadStatus.Failed
+      ? { error: DownloadError }
+      : { error?: never })
+   : never;
 
 export interface DownloadActionResponse<A extends DownloadAction = DownloadAction> {
    download: DownloadWithAnyStatus;
@@ -160,6 +202,11 @@ export const allowedActions = {
       DownloadAction.Resume,
       DownloadAction.Cancel,
    ],
+   [DownloadStatus.Failed]: [
+      DownloadAction.Listen,
+      DownloadAction.Resume,
+      DownloadAction.Cancel,
+   ],
    [DownloadStatus.Completed]: [],
    [DownloadStatus.Canceled]: [],
 } as const satisfies Record<DownloadStatus, DownloadAction[] | []>;
@@ -176,6 +223,7 @@ export const expectedStatusesForAction = {
       DownloadStatus.Idle,
       DownloadStatus.InProgress,
       DownloadStatus.Paused,
+      DownloadStatus.Failed,
       DownloadStatus.Canceled,
       DownloadStatus.Completed,
    ],

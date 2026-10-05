@@ -2,6 +2,8 @@ package org.silvermine.downloadmanager
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 
 /**
  * Emit-only payload sent to the frontend. Built from a [DownloadRecord] with
@@ -10,12 +12,14 @@ import kotlinx.serialization.Serializable
  * [totalBytes] is `null` when the server supplied no content length, and
  * serializes as an explicit JSON `null`.
  *
- * No property carries a default, so every key here is written whatever
+ * All properties except [error] lack defaults, so their keys are written whatever
  * `encodeDefaults` the caller's `Json` uses, rather than depending on the
  * TypeScript layer to coalesce it (attachDownload in `guest-js/actions.ts`).
  * [CreateOptions] carries one but marks it `@Required`, so it is written too.
+ * [error] is omitted when absent, including when `encodeDefaults` is enabled.
  */
 @Serializable
+@OptIn(ExperimentalSerializationApi::class)
 data class DownloadItem(
    @SerialName("url")
    val url: String,
@@ -38,4 +42,7 @@ data class DownloadItem(
 
    @SerialName("status")
    val status: DownloadStatus,
+   @EncodeDefault(EncodeDefault.Mode.NEVER)
+   val error: DownloadFailure? = null,
+
 )

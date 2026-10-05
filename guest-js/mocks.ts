@@ -6,6 +6,7 @@ import {
    type DownloadActionResponse,
    type CreateOptions,
    type DownloadState,
+   type DownloadError,
    DownloadStatus,
    expectedStatusesForAction,
 } from './types';
@@ -94,14 +95,14 @@ export interface MockDownloadPluginController {
     * @param command - The command that should fail.
     * @param error - The error instance or message to throw.
     */
-   setCommandError(command: MockDownloadCommand, error: Error | string): void;
+   setCommandError(command: MockDownloadCommand, error: Error | string | DownloadError): void;
 
    /**
     * Stores or replaces a mocked download without emitting a change event.
     *
     * @param download - The download state to store.
     * @throws If the status is not one a native store can hold: `Idle`, `InProgress` or
-    * `Paused`.
+    * `Paused` or `Failed`.
     */
    setDownload(download: DownloadState<DownloadStatus>): void;
 }
@@ -118,13 +119,15 @@ const STORED_STATUSES: readonly DownloadStatus[] = [
    DownloadStatus.Idle,
    DownloadStatus.InProgress,
    DownloadStatus.Paused,
+   DownloadStatus.Failed,
 ];
 
 function cloneDownload<S extends DownloadStatus>(download: DownloadState<S>): DownloadState<S> {
    return {
       ...download,
       options: { ...download.options },
-   };
+      ...(download.error ? { error: { ...download.error } } : {}),
+   } as DownloadState<S>;
 }
 
 function cloneDownloads(downloadsByPath: Map<string, DownloadState<DownloadStatus>>): DownloadState<DownloadStatus>[] {
@@ -145,8 +148,11 @@ function createPendingDownload(path: string): DownloadState<DownloadStatus.Pendi
    };
 }
 
-function normalizeError(error: Error | string): Error {
-   return error instanceof Error ? error : new Error(error);
+function normalizeError(error: Error | string | DownloadError): DownloadError {
+   if (typeof error === 'string' || error instanceof Error) {
+      return { code: 'unknown', message: typeof error === 'string' ? error : error.message };
+   }
+   return { ...error };
 }
 
 function getExpectedStatus<A extends DownloadAction>(action: A): MockActionResponse<A>['expectedStatus'] {
@@ -231,13 +237,14 @@ function getCreateOptionsArg(args: Record<string, unknown>): Required<CreateOpti
 
 function createTransitionDownload(
    currentDownload: DownloadState<DownloadStatus>,
-   nextStatus: DownloadStatus,
+   nextStatus: Exclude<DownloadStatus, DownloadStatus.Failed>,
    url?: string
 ): DownloadState<DownloadStatus> {
    return {
       ...currentDownload,
       url: url ?? currentDownload.url,
       status: nextStatus,
+      error: undefined,
    };
 }
 
@@ -279,8 +286,11 @@ export function createMockDownloadState(
       receivedBytes,
       totalBytes,
       progress: computedProgress,
+      ...(status === DownloadStatus.Failed ? {
+         error: { ...(overrides.error ?? { code: 'unknown', message: 'Download failed' }) },
+      } : {}),
       status,
-   };
+   } as DownloadState<DownloadStatus>;
 }
 
 /**
@@ -299,7 +309,7 @@ export function clearDownloadMocks(): void {
  * Canceling a download, or emitting a `Canceled` or `Completed` change, removes it from
  * the store as the native platforms do, so `get()` then returns a `Pending` download.
  * Seeded downloads, and those passed to `setDownload()`, must be `Idle`, `InProgress` or
- * `Paused`, the only statuses a native store holds.
+ * `Paused` or `Failed`, the only statuses a native store holds.
  * Create options are persisted with mocked downloads, but network-policy enforcement
  * is not simulated.
  * It only simulates the desktop event path and always returns `false` for `is_native`,
@@ -307,7 +317,8 @@ export function clearDownloadMocks(): void {
  * Use `emitChange()` to simulate progress updates or terminal states, or
  * `setDownload()` to seed a stored state without emitting an event.
  * As on the native platforms, `start`, `resume`, `pause` and `cancel` reject with
- * `Not Found: <path>` for a path with no stored download.
+ * `{ code: 'download not found', message: 'Not Found: <path>' }` for a path
+ * with no stored download.
  *
  * @param options Initial mocked download state.
  * @return Controller for inspecting invocations and mutating mocked download state.
@@ -319,7 +330,7 @@ export function mockDownloadPlugin(
 
    const invocations: MockDownloadInvocation[] = [];
 
-   const commandErrors = new Map<MockDownloadCommand, Error>();
+   const commandErrors = new Map<MockDownloadCommand, DownloadError>();
 
    for (const download of options.downloads ?? []) {
       setDownloadForPath(downloadsByPath, download);
@@ -334,7 +345,7 @@ export function mockDownloadPlugin(
 
       // As on the native platforms, only `create` accepts a path with no stored download.
       if (action !== DownloadAction.Create && !downloadsByPath.has(path)) {
-         throw new Error(`Not Found: ${path}`);
+         throw normalizeError({ code: 'download not found', message: `Not Found: ${path}` });
       }
 
       switch (action) {
@@ -343,11 +354,12 @@ export function mockDownloadPlugin(
                return createNoOpActionResponse(action, currentDownload);
             }
 
-            const createdDownload = {
+            const createdDownload: DownloadState<DownloadStatus.Idle> = {
                ...currentDownload,
                url: getUrlArg(args),
                options: getCreateOptionsArg(args),
                status: DownloadStatus.Idle,
+               error: undefined,
             };
 
             setDownloadForPath(downloadsByPath, createdDownload);
@@ -366,7 +378,7 @@ export function mockDownloadPlugin(
             return createActionResponse(action, nextDownload, true);
          }
          case DownloadAction.Resume: {
-            if (currentDownload.status !== DownloadStatus.Paused) {
+            if (currentDownload.status !== DownloadStatus.Paused && currentDownload.status !== DownloadStatus.Failed) {
                return createNoOpActionResponse(action, currentDownload);
             }
 
@@ -504,7 +516,7 @@ export function mockDownloadPlugin(
          return cloneDownloads(downloadsByPath);
       },
 
-      setCommandError(command: MockDownloadCommand, error: Error | string): void {
+      setCommandError(command: MockDownloadCommand, error: Error | string | DownloadError): void {
          commandErrors.set(command, normalizeError(error));
       },
 

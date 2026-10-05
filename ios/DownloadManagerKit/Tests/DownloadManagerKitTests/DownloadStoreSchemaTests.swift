@@ -104,7 +104,7 @@ final class DownloadStoreSchemaTests: XCTestCase {
    }
 
    func testChecksUnsupportedVersionBeforeDecodingRecords() {
-      for version in [UInt32(0), UInt32(2), UInt32.max] {
+      for version in [UInt32(0), UInt32(3), UInt32.max] {
          assertDecodeError(
             "{\"version\":\(version),\"downloads\":[{\"future\":\"record\"}]}",
             "Unsupported store version: \(version) (expected 1)"
@@ -135,8 +135,43 @@ final class DownloadStoreSchemaTests: XCTestCase {
       XCTAssertEqual(try Data(contentsOf: savePath), Data(text.utf8))
    }
 
+   func testFailedRecordWithoutErrorLoadsLeniently() throws {
+      for errorField in ["", #","error":null"#] {
+         let text = #"{"version":1,"downloads":[{"url":"https://example.com/good","path":"/tmp/good","options":{"allowMetered":true},"receivedBytes":0,"status":"idle"},{"url":"https://example.com/bad","path":"/tmp/bad","options":{"allowMetered":true},"receivedBytes":0,"status":"failed"\#(errorField)}]}"#
+         XCTAssertEqual(try DownloadStore.decodeRecords(from: Data(text.utf8)).count, 2)
+         try write(text)
+         XCTAssertEqual(DownloadStore.load(from: savePath).count, 2)
+         XCTAssertEqual(DownloadStore.load(from: savePath).last?.toItem().error?.code, "unknown")
+         XCTAssertEqual(try Data(contentsOf: savePath), Data(text.utf8))
+      }
+   }
+
+   func testStoredFailuresPreserveRecordsAndPublicErrorShape() throws {
+      let fixture = URL(fileURLWithPath: #filePath)
+         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+         .deletingLastPathComponent().deletingLastPathComponent()
+         .appendingPathComponent("fixtures/stored-failures.json")
+      let cases = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [[String: Any]])
+      for testCase in cases {
+         let good: [String: Any] = ["url": "https://example.com/good", "path": "/tmp/good",
+            "options": ["allowMetered": true], "receivedBytes": 0, "status": "idle"]
+         var failed = good
+         failed["path"] = "/tmp/failed"
+         failed["status"] = "failed"
+         failed["error"] = testCase["error"]
+         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "downloads": [good, failed]])
+         let records = try DownloadStore.decodeRecords(from: data)
+         XCTAssertEqual(records.count, 2)
+         let goodItem = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(records[0].toItem())) as? [String: Any])
+         let failedItem = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(records[1].toItem())) as? [String: Any])
+         XCTAssertNil(goodItem["error"])
+         XCTAssertEqual(failedItem["error"] as? NSDictionary, testCase["expected"] as? NSDictionary)
+         XCTAssertFalse(String(decoding: try JSONEncoder().encode(records), as: UTF8.self).contains("retryability"))
+      }
+   }
+
    func testRejectedDocumentsStayUntouchedUntilALaterSave() async throws {
-      let original = #"{"version":2,"downloads":[]}"#
+      let original = #"{"version":3,"downloads":[]}"#
       try write(original)
       let store = DownloadStore(savePath: savePath)
       let records = await store.list()
@@ -151,15 +186,17 @@ final class DownloadStoreSchemaTests: XCTestCase {
       XCTAssertEqual(DownloadStore.load(from: savePath).first?.path, record.path)
    }
 
-   func testWritesV1AndRoundTripsAllFieldsIncludingResumeData() async throws {
+   func testWritesV1AndRoundTripsFailedRecordWithRetainedData() async throws {
       let record = DownloadRecord(
          url: URL(string: "https://example.com/a.mp4")!,
          path: "/tmp/a.mp4",
          options: CreateOptions(allowMetered: false),
          receivedBytes: 123,
          totalBytes: 456,
-         status: .paused,
-         resumeDataPath: URL(fileURLWithPath: "/tmp/a.resume")
+         status: .failed,
+         resumeDataPath: URL(fileURLWithPath: "/tmp/a.resume"),
+         stagedFilePath: URL(fileURLWithPath: "/tmp/a.staged"),
+         error: .http(503)
       )
       let store = DownloadStore(savePath: savePath)
       await store.append(record)
@@ -174,8 +211,11 @@ final class DownloadStoreSchemaTests: XCTestCase {
       XCTAssertEqual(reloaded.options.allowMetered, false)
       XCTAssertEqual(reloaded.receivedBytes, 123)
       XCTAssertEqual(reloaded.totalBytes, 456)
-      XCTAssertEqual(reloaded.status, .paused)
+      XCTAssertEqual(reloaded.status, .failed)
       XCTAssertEqual(reloaded.resumeDataPath, record.resumeDataPath)
+      XCTAssertEqual(reloaded.stagedFilePath, record.stagedFilePath)
+      XCTAssertEqual(reloaded.error?.code, record.error?.code)
+      XCTAssertEqual(reloaded.error?.httpStatus, record.error?.httpStatus)
 
       await store.remove(record)
       let emptyBytes = try Data(contentsOf: savePath)

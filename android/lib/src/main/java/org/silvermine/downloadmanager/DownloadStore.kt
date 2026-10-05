@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.intOrNull
 import java.io.File
 
 /** The envelope fields have no defaults so both are always required and written. */
@@ -44,17 +45,32 @@ internal class DownloadStore(directory: File) {
 
    @Synchronized
    fun append(record: DownloadRecord) {
-      downloads[record.path] = record
-      save()
+      mutateAndSave { downloads[record.path] = record }
    }
 
    @Synchronized
    fun update(record: DownloadRecord, persist: Boolean = true) {
-      if (downloads.containsKey(record.path)) {
-         downloads[record.path] = record
-      }
+      val previous = downloads[record.path]
+      if (previous != null) downloads[record.path] = record
       if (persist) {
+         try {
+            save()
+         } catch (error: Exception) {
+            if (previous != null) downloads[record.path] = previous
+            throw error
+         }
+      }
+   }
+
+   /** A full disk must not hide the original failure from the current session. */
+   @Synchronized
+   fun recordFailure(record: DownloadRecord) {
+      if (!downloads.containsKey(record.path)) return
+      downloads[record.path] = record
+      try {
          save()
+      } catch (error: Exception) {
+         Log.e(TAG, "Failed to persist download failure", error)
       }
    }
 
@@ -65,26 +81,50 @@ internal class DownloadStore(directory: File) {
     * rewrite the whole file that many times.
     *
     * @param records The records to update. Unknown paths are ignored.
+    * @param persist Whether to save; startup recovery can retain changes in memory.
     */
    @Synchronized
-   fun update(records: List<DownloadRecord>) {
+   fun update(records: List<DownloadRecord>, persist: Boolean = true) {
       if (records.isEmpty()) {
          return
       }
 
-      for (record in records) {
-         if (downloads.containsKey(record.path)) {
-            downloads[record.path] = record
+      val applyUpdates = {
+         for (record in records) {
+            if (downloads.containsKey(record.path)) downloads[record.path] = record
          }
       }
-
-      save()
+      if (persist) mutateAndSave(applyUpdates) else applyUpdates()
    }
 
    @Synchronized
    fun remove(record: DownloadRecord) {
+      mutateAndSave { downloads.remove(record.path) }
+   }
+
+   /** The file has already landed; a store failure must not hide completion. */
+   @Synchronized
+   fun recordCompletion(record: DownloadRecord, emit: (DownloadRecord) -> Unit) {
       downloads.remove(record.path)
-      save()
+      try {
+         save()
+      } catch (error: Exception) {
+         Log.e(TAG, "Failed to persist download completion", error)
+      }
+      emit(record)
+   }
+
+   /** Command mutations become visible only when their persistence succeeds. */
+   private fun mutateAndSave(action: () -> Unit) {
+      val previous = downloads.toMap()
+      action()
+      try {
+         save()
+      } catch (error: Exception) {
+         downloads.clear()
+         downloads.putAll(previous)
+         throw error
+      }
    }
 
    private fun load() {
@@ -101,13 +141,17 @@ internal class DownloadStore(directory: File) {
 
    private fun save() {
       val bytes = encodeRecords(downloads.values.toList()).toByteArray()
-      val stream = file.startWrite()
+      val stream = try {
+         file.startWrite()
+      } catch (e: Exception) {
+         throw DownloadException.Store(e)
+      }
       try {
          stream.write(bytes)
          file.finishWrite(stream)
       } catch (e: Exception) {
          file.failWrite(stream)
-         Log.e(TAG, "Failed to save download store: ${e.message}")
+         throw DownloadException.Store(e)
       }
    }
 
@@ -164,10 +208,34 @@ internal class DownloadStore(directory: File) {
          }
 
          return try {
-            json.decodeFromJsonElement<List<DownloadRecord>>(records)
+            json.decodeFromJsonElement<List<DownloadRecord>>(JsonArray(records.map { element ->
+               val record = element as? JsonObject ?: return@map element
+               JsonObject(record.toMutableMap().apply {
+                  if ((record["status"] as? JsonPrimitive)?.content == "failed") {
+                     val failure = record["error"] as? JsonObject
+                     if (failure != null) put("error", normalizeFailure(failure))
+                  } else {
+                     remove("error")
+                  }
+               })
+            }))
          } catch (_: SerializationException) {
             throw SerializationException("Invalid store records")
          }
+      }
+
+      /** Future codes and missing diagnostics must not invalidate other downloads. */
+      private fun normalizeFailure(failure: JsonObject): JsonObject {
+         val knownCodes = setOf("invalid input", "invalid state", "download not found",
+            "network unavailable", "network restricted", "timeout", "connection", "tls", "http", "file", "store", "unknown")
+         var code = (failure["code"] as? JsonPrimitive)?.content?.takeIf { it in knownCodes } ?: "unknown"
+         val status = (failure["httpStatus"] as? JsonPrimitive)?.intOrNull?.takeIf { it in 0..65535 }
+         if (code == "http" && status == null) code = "unknown"
+         return JsonObject(buildMap {
+            put("code", JsonPrimitive(code))
+            put("message", failure["message"] ?: JsonPrimitive("Download failed"))
+            if (code == "http") put("httpStatus", JsonPrimitive(status))
+         })
       }
 
       /**
