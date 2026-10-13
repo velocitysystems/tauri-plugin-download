@@ -535,6 +535,40 @@ A command rejection alone does not mark a download as failed. Tauri may reject a
 invocation before it reaches the plugin (for example, an ACL denial); those framework
 errors are outside this plugin error contract.
 
+The package exports `DOWNLOAD_ERROR_CODES`, a readonly array of all known codes.
+The `DownloadErrorCode` type is derived from this array, so consumers can use the
+same list for runtime validation without maintaining a copy.
+
+Use the exported `isDownloadError(value)` type guard to check an unknown rejection
+and narrow it to `DownloadError`:
+
+```ts
+import { get, isDownloadError } from '@silvermine/tauri-plugin-download';
+
+try {
+   await get('/downloads/file.zip');
+} catch (error: unknown) {
+   if (isDownloadError(error)) {
+      console.error(error.code, error.message);
+      if (error.code === 'http') {
+         console.error('HTTP status:', error.httpStatus);
+      }
+   } else {
+      console.error('Unexpected rejection:', error);
+   }
+}
+```
+
+The guard checks for a known code and a string message. HTTP errors require a
+numeric `httpStatus`; other errors must omit it or set it to `undefined`. Extra
+fields are allowed. The guard also works on a failed download's `error`, but it
+does not validate the rest of a download or event.
+
+The literal code `'unknown'` is accepted. Unrecognized codes, including new codes
+from a newer native plugin than the npm package, are rejected to keep TypeScript
+narrowing accurate. Keep a fallback for those values and framework rejections.
+The guard checks the object's shape; it cannot establish which plugin produced it.
+
 ### Testing with mocks
 
 For unit tests, this package publishes `@silvermine/tauri-plugin-download/mocks` so you
