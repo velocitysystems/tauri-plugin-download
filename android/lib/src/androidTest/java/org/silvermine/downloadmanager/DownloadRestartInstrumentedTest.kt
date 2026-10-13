@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import androidx.work.impl.WorkManagerImpl
 import androidx.work.testing.TestDriver
 import androidx.work.testing.WorkManagerTestInitHelper
@@ -89,7 +90,7 @@ class DownloadRestartInstrumentedTest {
             DownloadRecord(
                url = "http://127.0.0.1:${server.localPort}/$name",
                path = File(directory, name).path,
-               receivedBytes = if (name == "partial") 3L else 0L,
+               receivedBytes = if (name == "partial") 0L else 2L,
                totalBytes = 6L,
                status = DownloadStatus.InProgress,
             ).also { store.append(it) }
@@ -104,6 +105,7 @@ class DownloadRestartInstrumentedTest {
          store.append(orphan)
          File("${canceled.path}${DownloadWorker.DOWNLOAD_SUFFIX}").writeText("ab")
          val canceledRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
+            .addTag(DownloadManager.STORE_TAG)
             .setInitialDelay(1, TimeUnit.DAYS).build()
          workManager.enqueueUniqueWork(
             "download_manager:${canceled.path}", ExistingWorkPolicy.REPLACE, canceledRequest,
@@ -121,10 +123,15 @@ class DownloadRestartInstrumentedTest {
             errors.checkThat(manager.get(record.path)?.status, equalTo(DownloadStatus.InProgress))
             errors.checkThat(manager.list().single { it.path == record.path }.status,
                equalTo(DownloadStatus.InProgress))
+            val measuredBytes = if (record == records.first()) 3L else 0L
+            errors.checkThat(manager.get(record.path)?.receivedBytes, equalTo(measuredBytes))
+            errors.checkThat(manager.list().single { it.path == record.path }.receivedBytes,
+               equalTo(measuredBytes))
+            assertEquals(measuredBytes, DownloadStore(directory).findByPath(record.path)?.receivedBytes)
          }
 
          for ((record, request) in records.zip(requests)) {
-            val response = executor.submit { respond(server, record.receivedBytes > 0) }
+            val response = executor.submit { respond(server, record == records.first()) }
             driver.setInitialDelayMet(request.id)
             response.get(15, TimeUnit.SECONDS)
             assertCompleted(request, record, manager)
@@ -139,7 +146,7 @@ class DownloadRestartInstrumentedTest {
          val record = DownloadRecord(
             url = "http://127.0.0.1:${server.localPort}/partial",
             path = File(directory, "partial").path,
-            receivedBytes = 3L,
+            receivedBytes = 0L,
             totalBytes = 6L,
             status = DownloadStatus.InProgress,
          )
@@ -166,6 +173,7 @@ class DownloadRestartInstrumentedTest {
             val manager = DownloadManager.getInstance(context, directory)
             errors.checkThat(manager.get(record.path)?.status, equalTo(DownloadStatus.InProgress))
             errors.checkThat(manager.list().single().status, equalTo(DownloadStatus.InProgress))
+            errors.checkThat(manager.get(record.path)?.receivedBytes, equalTo(3L))
             releaseResponse.countDown()
             response.get(15, TimeUnit.SECONDS)
             assertCompleted(request, record, manager)
@@ -175,10 +183,107 @@ class DownloadRestartInstrumentedTest {
       }
    }
 
+   @Test
+   fun newlyStartedDownloadCarriesStoreCompatibilityTag() {
+      val manager = DownloadManager.getInstance(context, directory)
+      val path = File(directory, "started").path
+      manager.create(path, "http://127.0.0.1/unused")
+      // TestDriver holds the network constraint, so no HTTP request is made.
+      manager.start(path)
+      val info = workManager.getWorkInfosForUniqueWork("download_manager:$path").get(5, TimeUnit.SECONDS).single()
+      assertTrue(DownloadManager.STORE_TAG in info.tags)
+      assertEquals(WorkInfo.State.ENQUEUED, info.state)
+   }
+
+   @Test
+   fun untaggedWorkIsCanceledWithOrWithoutStoreDirectory() {
+      val store = DownloadStore(directory)
+      val records = listOf("legacy-partial", "legacy-fresh", "compatible-partial", "compatible-fresh").map { name ->
+         DownloadRecord(
+            url = "http://127.0.0.1/unused",
+            path = File(directory, name).path,
+            receivedBytes = 1L,
+            totalBytes = 6L,
+            status = DownloadStatus.InProgress,
+         ).also { store.append(it) }
+      }
+      for (record in records.filter { it.path.endsWith("partial") }) {
+         File("${record.path}${DownloadWorker.DOWNLOAD_SUFFIX}").writeText("abc")
+      }
+      val requests = records.map { record ->
+         OneTimeWorkRequestBuilder<DownloadWorker>()
+            .setInputData(if (File(record.path).name.startsWith("compatible")) {
+               DownloadManager.inputDataFor(record, null, directory)
+            } else {
+               workDataOf(DownloadWorker.KEY_URL to record.url, DownloadWorker.KEY_PATH to record.path)
+            })
+            .setInitialDelay(1, TimeUnit.DAYS)
+            .build().also {
+               workManager.enqueueUniqueWork("download_manager:${record.path}", ExistingWorkPolicy.REPLACE, it)
+                  .result.get(10, TimeUnit.SECONDS)
+            }
+      }
+
+      val manager = DownloadManager.getInstance(context, directory)
+      for ((index, record) in records.withIndex()) {
+         val partial = record.path.endsWith("partial")
+         val expectedStatus = if (partial) DownloadStatus.Paused else DownloadStatus.Idle
+         assertEquals(expectedStatus, manager.get(record.path)?.status)
+         assertEquals(if (partial) 3L else 0L, manager.get(record.path)?.receivedBytes)
+         assertEquals(WorkInfo.State.CANCELLED,
+            workManager.getWorkInfoById(requests[index].id).get(5, TimeUnit.SECONDS).state)
+         if (partial) assertEquals("abc", File("${record.path}${DownloadWorker.DOWNLOAD_SUFFIX}").readText())
+         // Explicit user action creates tagged replacement work, held by TestDriver's
+         // network constraint until a later test permits it to run.
+         if (partial) manager.resume(record.path) else manager.start(record.path)
+         val replacement = workManager.getWorkInfosForUniqueWork("download_manager:${record.path}")
+            .get(5, TimeUnit.SECONDS).single { !it.state.isFinished }
+         assertTrue(DownloadManager.STORE_TAG in replacement.tags)
+      }
+   }
+
+   @Test
+   fun untaggedWorkerThatInitializesManagerCannotStartTransferring() {
+      ServerSocket(0).use { server ->
+         val record = DownloadRecord(
+            url = "http://127.0.0.1:${server.localPort}/partial",
+            path = File(directory, "partial").path,
+            status = DownloadStatus.InProgress,
+         )
+         DownloadStore(directory).append(record)
+         val partial = File("${record.path}${DownloadWorker.DOWNLOAD_SUFFIX}")
+         partial.writeText("abc")
+         val request = OneTimeWorkRequestBuilder<DownloadWorker>()
+            .setInputData(DownloadManager.inputDataFor(record, null, directory))
+            .setInitialDelay(1, TimeUnit.DAYS).build()
+         workManager.enqueueUniqueWork("download_manager:${record.path}", ExistingWorkPolicy.REPLACE, request)
+            .result.get(10, TimeUnit.SECONDS)
+         driver.setInitialDelayMet(request.id)
+         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+         while (!workManager.getWorkInfoById(request.id).get(5, TimeUnit.SECONDS).state.isFinished &&
+            System.nanoTime() < deadline) {
+            Thread.sleep(20)
+         }
+         assertEquals(WorkInfo.State.CANCELLED,
+            workManager.getWorkInfoById(request.id).get(5, TimeUnit.SECONDS).state)
+         val manager = DownloadManager.getInstance(context, directory)
+         assertEquals(DownloadStatus.Paused, manager.get(record.path)?.status)
+         assertEquals(3L, manager.get(record.path)?.receivedBytes)
+         assertEquals("abc", partial.readText())
+         server.soTimeout = 200
+         try {
+            server.accept().use { org.junit.Assert.fail("Canceled worker opened an HTTP connection") }
+         } catch (_: java.net.SocketTimeoutException) {
+            // No request was made, including by a worker that initialized the manager.
+         }
+      }
+   }
+
    /** Holds a restored request until the test permits its next attempt. */
    private fun enqueue(record: DownloadRecord): OneTimeWorkRequest =
       OneTimeWorkRequestBuilder<DownloadWorker>()
          .setInputData(DownloadManager.inputDataFor(record, null, directory))
+         .addTag(DownloadManager.STORE_TAG)
          .setInitialRunAttemptCount(1)
          .setInitialDelay(1, TimeUnit.DAYS)
          .build().also { request ->

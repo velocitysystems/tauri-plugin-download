@@ -48,8 +48,8 @@ internal class DownloadWorker(
       // request enqueued before this key existed can lack it, and running it would
       // build the process singleton at the default directory — so a plugin that
       // configured one would be handed the wrong store for the rest of the session.
-      // The record survives: reconciliation reverts it on the next manager init, and
-      // the download can be started again.
+      // These old requests also lack STORE_TAG, so startup reconciliation cancels
+      // them and restores a state the caller can start or resume.
       val storeDir = inputData.getString(KEY_STORE_DIR)?.let { File(it) }
          ?: return Result.failure()
 
@@ -61,6 +61,11 @@ internal class DownloadWorker(
          Log.w(TAG, "Refusing work for a different store: ${e.message}")
          return Result.failure()
       }
+      // An untagged worker can initialize the manager first and be canceled by its
+      // own startup reconciliation. Do not rely on asynchronous stop delivery: reject
+      // it here before any HTTP request or file write, even if its inputs are valid.
+      if (DownloadManager.STORE_TAG !in tags || isStopped) return Result.failure()
+
       val store = manager.store
       val tempFile = File("$path$DOWNLOAD_SUFFIX")
       if (store.findByPath(path)?.status == DownloadStatus.Failed) return Result.success()

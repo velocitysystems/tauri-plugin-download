@@ -369,8 +369,13 @@ Android can also report `Paused` mid-hold: if the constraint tracker stops the w
 before the connection drops — the two race — the retry moves it back to `InProgress`. A
 record merely waiting, on the unmetered constraint or in a retry backoff, stays
 `InProgress` with no worker running. After process death, startup preserves that status
-while WorkManager has unfinished work for the download. Only records without unfinished
-work revert to `Paused`, or `Idle` at zero bytes when no partial file survives.
+while WorkManager has compatible unfinished work for the download, and refreshes the byte
+count from the partial file. Requests are tagged to identify support for the required
+store-directory input. On upgrade, startup cancels older untagged requests, including
+those that already contain this input. Their partial files are retained, but continuing
+these downloads requires an explicit `resume()` or `start()` to enqueue a tagged request.
+Records without compatible unfinished work revert to `Paused`, or `Idle` at zero bytes
+when no partial file survives.
 Reconciliation on mobile emits no event; read the recovered state through `get()` or
 `list()`. Desktop emits an event.
 
@@ -916,7 +921,8 @@ The last command requires a connected Android device or emulator. It exercises
 the real `AtomicFile`, directory creation, backup recovery, and loading rejected
 documents. It also recreates persisted downloads with unfinished WorkManager jobs,
 checks their startup state through `get()` and `list()`, and runs the workers against a
-local HTTP server. Kotlin JVM tests cover schema validation and record round trips.
+local HTTP server. Kotlin JVM tests cover schema validation, record round trips, and
+startup status and byte-count reconciliation.
 
 On macOS, run the Swift package tests (also run by the macOS CI job):
 
