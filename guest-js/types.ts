@@ -1,19 +1,22 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
-/** Stable categories for rejected plugin commands. Messages are diagnostic text. */
-export type DownloadErrorCode =
-   | 'invalid input'
-   | 'invalid state'
-   | 'download not found'
-   | 'network unavailable'
-   | 'network restricted'
-   | 'timeout'
-   | 'connection'
-   | 'tls'
-   | 'http'
-   | 'file'
-   | 'store'
-   | 'unknown';
+/** Stable categories for command and transfer failures. Messages are diagnostic text. */
+export const DOWNLOAD_ERROR_CODES = [
+   'invalid input',
+   'invalid state',
+   'download not found',
+   'network unavailable',
+   'network restricted',
+   'timeout',
+   'connection',
+   'tls',
+   'http',
+   'file',
+   'store',
+   'unknown',
+] as const;
+
+export type DownloadErrorCode = (typeof DOWNLOAD_ERROR_CODES)[number];
 
 /**
  * Rejected plugin commands return this plain object, not an Error instance.
@@ -32,6 +35,29 @@ export interface DownloadHttpError {
 }
 
 export type DownloadError = DownloadNonHttpError | DownloadHttpError;
+
+/**
+ * Checks the shape of a command or transfer failure, allowing extra fields.
+ * Unrecognized codes are rejected, including codes from a newer native layer.
+ */
+export function isDownloadError(value: unknown): value is DownloadError {
+   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return false;
+   }
+   if (!('code' in value) || typeof value.code !== 'string') {
+      return false;
+   }
+   if (!(DOWNLOAD_ERROR_CODES as readonly string[]).includes(value.code)) {
+      return false;
+   }
+   if (!('message' in value) || typeof value.message !== 'string') {
+      return false;
+   }
+   if (value.code === 'http') {
+      return 'httpStatus' in value && typeof value.httpStatus === 'number';
+   }
+   return !('httpStatus' in value) || value.httpStatus === undefined;
+}
 
 
 /**
