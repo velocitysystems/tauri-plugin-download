@@ -125,18 +125,23 @@ class DownloadStoreInstrumentedTest {
       val partial = File(directory, "partial.mp4.download")
       val active = sampleRecord().copy(path = File(directory, "partial.mp4").path, status = DownloadStatus.InProgress)
       val empty = active.copy(path = File(directory, "empty.mp4").path)
+      val pending = active.copy(path = File(directory, "pending.mp4").path)
       store.append(active)
       store.append(empty)
+      store.append(pending)
       partial.writeText("abc")
+      File("${pending.path}${DownloadWorker.DOWNLOAD_SUFFIX}").writeText("abcdef")
       storeDirectory.deleteRecursively()
       storeDirectory.writeText("block persistence")
 
-      DownloadManager.reconcileStoreOnInit(store) { false }
+      DownloadManager.reconcileStoreOnInit(store) { it == pending.path }
 
       assertEquals(DownloadStatus.Paused, store.findByPath(active.path)?.status)
       assertEquals(3L, store.findByPath(active.path)?.receivedBytes)
       assertEquals(DownloadStatus.Idle, store.findByPath(empty.path)?.status)
       assertEquals(0L, store.findByPath(empty.path)?.receivedBytes)
+      assertEquals(DownloadStatus.InProgress, store.findByPath(pending.path)?.status)
+      assertEquals(6L, store.findByPath(pending.path)?.receivedBytes)
       assertEquals("abc", partial.readText())
       // A later successful command persists the recovery that remained in memory.
       storeDirectory.delete()

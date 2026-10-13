@@ -247,16 +247,22 @@ class DownloadManager private constructor(context: Context, private val storeDir
        * for their path. Pending work survives process death and can run again without
        * a resume command, including while waiting for constraints or retry backoff.
        * Records without work recover from the partial file, as on desktop.
+       * Preserved records keep their status and refresh their bytes from the partial file.
+       *
+       * @param store The download store to reconcile.
+       * @param hasUnfinishedWork Whether the path has unfinished work that can continue the download.
        */
       internal fun reconcileStoreOnInit(store: DownloadStore, hasUnfinishedWork: (String) -> Boolean) {
          val reconciled = mutableListOf<DownloadRecord>()
 
          for (record in store.list()) {
-            if (record.status != DownloadStatus.InProgress || hasUnfinishedWork(record.path)) continue
-            val reverted = revertInProgress(record, DownloadWorker.tempFileLength(record.path)) ?: continue
+            if (record.status != DownloadStatus.InProgress) continue
+            val updated = reconcileRecordOnInit(
+               record, DownloadWorker.tempFileLength(record.path), hasUnfinishedWork(record.path),
+            ) ?: continue
 
-            reconciled.add(reverted)
-            Log.d(TAG, "[${File(record.path).name}] Reconciled to ${reverted.status}")
+            reconciled.add(updated)
+            Log.d(TAG, "[${File(record.path).name}] Reconciled to ${updated.status}")
          }
 
          try {
@@ -309,6 +315,26 @@ class DownloadManager private constructor(context: Context, private val storeDir
                if (options.allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED
             )
             .build()
+
+      /**
+       * Reconciles a startup record with its partial file and compatible pending work.
+       * Kept pure so the startup decision can be covered by JVM tests.
+       *
+       * @param record The record to reconcile.
+       * @param tempFileLength The temp file's length, or `null` when it is absent.
+       * @param hasUnfinishedWork Whether compatible unfinished work exists for the record.
+       * @return The updated record, or `null` when no change is needed.
+       */
+      internal fun reconcileRecordOnInit(
+         record: DownloadRecord,
+         tempFileLength: Long?,
+         hasUnfinishedWork: Boolean,
+      ): DownloadRecord? {
+         if (record.status != DownloadStatus.InProgress) return null
+         if (!hasUnfinishedWork) return revertInProgress(record, tempFileLength)
+
+         return record.withBytes(tempFileLength ?: 0L).takeIf { it != record }
+      }
 
       /**
        * Decides what a record left `InProgress` with no worker behind it should
