@@ -39,6 +39,9 @@ export type DownloadError = DownloadNonHttpError | DownloadHttpError;
 /**
  * Checks the shape of a command or transfer failure, allowing extra fields.
  * Unrecognized codes are rejected, including codes from a newer native layer.
+ *
+ * @param value The value to check.
+ * @returns `true` if the value matches the `DownloadError` shape.
  */
 export function isDownloadError(value: unknown): value is DownloadError {
    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
