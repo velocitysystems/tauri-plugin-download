@@ -166,7 +166,7 @@ class DownloadRestartInstrumentedTest {
             driver.setInitialDelayMet(request.id)
             assertTrue("Worker did not reach the server", requested.await(15, TimeUnit.SECONDS))
             assertEquals(WorkInfo.State.RUNNING,
-               workManager.getWorkInfoById(request.id).get(5, TimeUnit.SECONDS).state)
+               workInfo(request.id).state)
 
             // The worker has initialized the singleton, but has not received headers
             // that could overwrite a wrongly reconciled status with InProgress.
@@ -231,7 +231,7 @@ class DownloadRestartInstrumentedTest {
          assertEquals(expectedStatus, manager.get(record.path)?.status)
          assertEquals(if (partial) 3L else 0L, manager.get(record.path)?.receivedBytes)
          assertEquals(WorkInfo.State.CANCELLED,
-            workManager.getWorkInfoById(requests[index].id).get(5, TimeUnit.SECONDS).state)
+            workInfo(requests[index].id).state)
          if (partial) assertEquals("abc", File("${record.path}${DownloadWorker.DOWNLOAD_SUFFIX}").readText())
          // Explicit user action creates tagged replacement work, held by TestDriver's
          // network constraint until a later test permits it to run.
@@ -260,12 +260,12 @@ class DownloadRestartInstrumentedTest {
             .result.get(10, TimeUnit.SECONDS)
          driver.setInitialDelayMet(request.id)
          val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
-         while (!workManager.getWorkInfoById(request.id).get(5, TimeUnit.SECONDS).state.isFinished &&
+         while (!workInfo(request.id).state.isFinished &&
             System.nanoTime() < deadline) {
             Thread.sleep(20)
          }
          assertEquals(WorkInfo.State.CANCELLED,
-            workManager.getWorkInfoById(request.id).get(5, TimeUnit.SECONDS).state)
+            workInfo(request.id).state)
          val manager = DownloadManager.getInstance(context, directory)
          assertEquals(DownloadStatus.Paused, manager.get(record.path)?.status)
          assertEquals(3L, manager.get(record.path)?.receivedBytes)
@@ -309,15 +309,26 @@ class DownloadRestartInstrumentedTest {
       }
    }
 
+   /**
+    * Looks up a request already enqueued by the test, failing clearly if it is absent.
+    *
+    * @param id The enqueued request's ID.
+    * @return The request's current work information.
+    */
+   private fun workInfo(id: UUID): WorkInfo =
+      requireNotNull(workManager.getWorkInfoById(id).get(5, TimeUnit.SECONDS)) {
+         "Missing work request $id"
+      }
+
    /** Waits for the worker result and verifies the completed file and public store. */
    private fun assertCompleted(request: OneTimeWorkRequest, record: DownloadRecord, manager: DownloadManager) {
       val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
-      while (!workManager.getWorkInfoById(request.id).get(5, TimeUnit.SECONDS).state.isFinished &&
+      while (!workInfo(request.id).state.isFinished &&
          System.nanoTime() < deadline) {
          Thread.sleep(20)
       }
       assertEquals(WorkInfo.State.SUCCEEDED,
-         workManager.getWorkInfoById(request.id).get(5, TimeUnit.SECONDS).state)
+         workInfo(request.id).state)
       assertTrue(File(record.path).exists())
       assertEquals("abcdef", File(record.path).readText())
       assertNull(manager.get(record.path))
