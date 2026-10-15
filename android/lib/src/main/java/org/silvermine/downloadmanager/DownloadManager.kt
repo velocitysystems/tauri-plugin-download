@@ -47,7 +47,21 @@ class DownloadManager private constructor(context: Context, private val storeDir
    val changed: SharedFlow<DownloadItem> = _changed.asSharedFlow()
 
    init {
-      reconcileStoreOnInit(store)
+      reconcileStoreOnInit(store) { path ->
+         // WorkManager retains queued, running and blocked work across process death.
+         // Await its database query before exposing the recovered store to callers.
+         val unfinished = workManager.getWorkInfosForUniqueWork(workName(path)).get().filter {
+            !it.state.isFinished
+         }
+         // Upgrade policy: cancel all pre-tag requests, including ones that already
+         // carry a store directory. Otherwise they could resume automatically after
+         // we report Paused/Idle. Keep the partial file for an explicit resume/start,
+         // which enqueues a tagged replacement. Await cancellation before recovery.
+         for (work in unfinished.filter { STORE_TAG !in it.tags }) {
+            workManager.cancelWorkById(work.id).result.get()
+         }
+         unfinished.any { STORE_TAG in it.tags }
+      }
    }
 
    /**
@@ -225,6 +239,7 @@ class DownloadManager private constructor(context: Context, private val storeDir
          .setConstraints(constraintsFor(record.options))
          .setInputData(inputDataFor(record, userAgent, storeDir))
          .addTag(WORK_TAG)
+         .addTag(STORE_TAG)
          .build()
 
       workManager.enqueueUniqueWork(
@@ -239,18 +254,27 @@ class DownloadManager private constructor(context: Context, private val storeDir
    companion object {
       /**
        * Reconciles the store on initialization.
-       * Updates the state of any download operations which are still marked as "In Progress".
-       * This can occur if the application was terminated before a download was completed.
-       * Mirrors the Rust Download.init() method.
+       * Reverts InProgress records only when WorkManager has no compatible unfinished work
+       * for their path. Pending work survives process death and can run again without
+       * a resume command, including while waiting for constraints or retry backoff.
+       * Records without work recover from the partial file, as on desktop.
+       * Preserved records keep their status and refresh their bytes from the partial file.
+       *
+       * @param store The download store to reconcile.
+       * @param hasUnfinishedWork Whether the path has unfinished work tagged as carrying
+       *    the store directory required by the current worker.
        */
-      internal fun reconcileStoreOnInit(store: DownloadStore) {
+      internal fun reconcileStoreOnInit(store: DownloadStore, hasUnfinishedWork: (String) -> Boolean) {
          val reconciled = mutableListOf<DownloadRecord>()
 
          for (record in store.list()) {
-            val reverted = revertInProgress(record, DownloadWorker.tempFileLength(record.path)) ?: continue
+            if (record.status != DownloadStatus.InProgress) continue
+            val updated = reconcileRecordOnInit(
+               record, DownloadWorker.tempFileLength(record.path), hasUnfinishedWork(record.path),
+            ) ?: continue
 
-            reconciled.add(reverted)
-            Log.d(TAG, "[${File(record.path).name}] Reconciled to ${reverted.status}")
+            reconciled.add(updated)
+            Log.d(TAG, "[${File(record.path).name}] Reconciled to ${updated.status}")
          }
 
          try {
@@ -305,6 +329,26 @@ class DownloadManager private constructor(context: Context, private val storeDir
             .build()
 
       /**
+       * Reconciles a startup record with its partial file and compatible pending work.
+       * Kept pure so the startup decision can be covered by JVM tests.
+       *
+       * @param record The record to reconcile.
+       * @param tempFileLength The temp file's length, or `null` when it is absent.
+       * @param hasUnfinishedWork Whether compatible unfinished work exists for the record.
+       * @return The updated record, or `null` when no change is needed.
+       */
+      internal fun reconcileRecordOnInit(
+         record: DownloadRecord,
+         tempFileLength: Long?,
+         hasUnfinishedWork: Boolean,
+      ): DownloadRecord? {
+         if (record.status != DownloadStatus.InProgress) return null
+         if (!hasUnfinishedWork) return revertInProgress(record, tempFileLength)
+
+         return record.withBytes(tempFileLength ?: 0L).takeIf { it != record }
+      }
+
+      /**
        * Decides what a record left `InProgress` with no worker behind it should
        * become, or `null` when it needs no change.
        *
@@ -335,6 +379,8 @@ class DownloadManager private constructor(context: Context, private val storeDir
 
       private const val TAG = "DownloadManager"
       private const val WORK_TAG = "download_manager"
+      // WorkInfo exposes tags, but not input data. This marks requests that carry KEY_STORE_DIR.
+      internal const val STORE_TAG = "download_manager:store_dir"
 
       @Volatile
       private var instance: DownloadManager? = null

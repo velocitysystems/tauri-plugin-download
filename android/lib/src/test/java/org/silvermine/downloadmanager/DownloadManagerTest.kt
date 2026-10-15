@@ -61,6 +61,55 @@ class DownloadManagerTest {
       }
    }
 
+   @Test
+   fun `startup preserves pending work and measures bytes ahead of or behind the store`() {
+      for (length in listOf(480L, 800L, 0L)) {
+         val record = inProgressRecord()
+         assertEquals(record.withBytes(length), DownloadManager.reconcileRecordOnInit(record, length, true))
+      }
+   }
+
+   @Test
+   fun `startup preserves pending work without a partial file at zero bytes`() {
+      val record = inProgressRecord()
+      assertEquals(record.withBytes(0L), DownloadManager.reconcileRecordOnInit(record, null, true))
+   }
+
+   @Test
+   fun `startup avoids rewriting a preserved record with accurate bytes`() {
+      assertNull(DownloadManager.reconcileRecordOnInit(inProgressRecord(), 500L, true))
+      assertNull(DownloadManager.reconcileRecordOnInit(inProgressRecord().withBytes(0L), null, true))
+   }
+
+   @Test
+   fun `startup without compatible work recovers a partial download to paused`() {
+      val record = inProgressRecord()
+      for (length in listOf(480L, 0L)) {
+         assertEquals(record.withBytes(length).withStatus(DownloadStatus.Paused),
+            DownloadManager.reconcileRecordOnInit(record, length, false))
+      }
+   }
+
+   @Test
+   fun `startup without compatible work recovers a missing partial to idle`() {
+      val record = inProgressRecord()
+      assertEquals(record.withBytes(0L).withStatus(DownloadStatus.Idle),
+         DownloadManager.reconcileRecordOnInit(record, null, false))
+   }
+
+   @Test
+   fun `startup leaves other statuses unchanged regardless of pending work or partial file`() {
+      for (status in DownloadStatus.entries.filter { it != DownloadStatus.InProgress }) {
+         for (pending in listOf(true, false)) {
+            for (length in listOf(null, 0L, 800L)) {
+               assertNull("$status must remain unchanged", DownloadManager.reconcileRecordOnInit(
+                  inProgressRecord().withStatus(status), length, pending,
+               ))
+            }
+         }
+      }
+   }
+
    // -- Network policy --
 
    // Building the Constraints outside enqueueDownload() shrinks the untestable surface
