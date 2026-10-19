@@ -202,6 +202,6 @@ class DownloadPlugin: Plugin {
 }
 
 @_cdecl("init_plugin_download")
-func initPlugin() -> Plugin {
+public func initPlugin() -> Plugin {
    return DownloadPlugin()
 }
