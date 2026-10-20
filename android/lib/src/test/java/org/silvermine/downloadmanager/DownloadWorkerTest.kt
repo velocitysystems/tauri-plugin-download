@@ -5,27 +5,63 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.nio.file.Files
 
 class DownloadWorkerTest {
 
    @Test
-   fun `worker exit removes only orphaned partial files`() {
-      val partial = Files.createTempFile("download-worker", ".download").toFile()
-      try {
-         for (status in DownloadStatus.entries) {
-            partial.writeText("retained bytes")
-            val record = DownloadRecord("https://example.com/file", "/tmp/file", status = status)
-            DownloadWorker.discardOrphanedPartial(record, partial)
-            assertEquals("retained bytes", partial.readText())
-         }
-         DownloadWorker.discardOrphanedPartial(null, partial)
-         assertFalse(partial.exists())
-         DownloadWorker.discardOrphanedPartial(null, partial)
-         assertFalse(partial.exists())
-      } finally {
-         partial.delete()
+   fun `live network interruption retains active intent and checkpoints resumable bytes`() {
+      val active = DownloadRecord("https://example.com/file", "/tmp/file",
+         receivedBytes = 500, totalBytes = 1000, status = DownloadStatus.InProgress)
+      for (length in listOf(null, 0L, 480L, 600L)) {
+         val held = DownloadWorker.interruptedRecord(active, length, true, canceledByApp = false)!!
+         assertEquals(DownloadStatus.InProgress, held.status)
+         assertEquals(length ?: 0L, held.receivedBytes)
+         assertEquals(1000L, held.totalBytes)
+         assertNull(held.error)
+         // A 503 on automatic resume must reach WorkManager's retry path.
+         assertEquals(DownloadWorker.FailureOutcome.Retry,
+            DownloadWorker.failureOutcome(DownloadFailure.http(503), 1, held.status, false, ownsWork = true))
+         assertEquals(DownloadWorker.FailureOutcome.Fail,
+            DownloadWorker.failureOutcome(DownloadFailure.http(404), 1, held.status, false, ownsWork = true))
+         assertEquals(DownloadWorker.FailureOutcome.Fail,
+            DownloadWorker.failureOutcome(DownloadFailure.http(503), 5, held.status, false, ownsWork = true))
       }
+   }
+
+   @Test
+   fun `interrupted workers cannot overwrite explicit commands or replacement progress`() {
+      for (status in DownloadStatus.entries) {
+         val record = DownloadRecord("https://example.com/file", "/tmp/file", status = status)
+         assertNull(DownloadWorker.interruptedRecord(record, 480L, false, canceledByApp = false))
+         if (status != DownloadStatus.InProgress) {
+            assertNull(DownloadWorker.interruptedRecord(record, 480L, true, canceledByApp = false))
+         }
+      }
+      assertNull(DownloadWorker.interruptedRecord(null, 480L, true, canceledByApp = false))
+   }
+
+   @Test
+   fun `host cancellation recovers owned work from the partial file`() {
+      val active = DownloadRecord("https://example.com/file", "/tmp/file",
+         receivedBytes = 500, totalBytes = 1000, status = DownloadStatus.InProgress)
+      for (length in listOf(null, 0L, 480L, 600L)) {
+         val canceled = DownloadWorker.interruptedRecord(active, length, true, true)!!
+         assertEquals(if (length == null) DownloadStatus.Idle else DownloadStatus.Paused, canceled.status)
+         assertEquals(length ?: 0L, canceled.receivedBytes)
+         assertNull(canceled.error)
+      }
+   }
+
+   @Test
+   fun `host cancellation cannot overwrite explicit commands or replacement work`() {
+      for (status in DownloadStatus.entries) {
+         val record = DownloadRecord("https://example.com/file", "/tmp/file", status = status)
+         assertNull(DownloadWorker.interruptedRecord(record, 480L, false, true))
+         if (status != DownloadStatus.InProgress) {
+            assertNull(DownloadWorker.interruptedRecord(record, 480L, true, true))
+         }
+      }
+      assertNull(DownloadWorker.interruptedRecord(null, 480L, true, true))
    }
 
    // Recovery decisions run without a worker; runAttemptCount counts prior runs.
@@ -151,27 +187,27 @@ class DownloadWorkerTest {
       val transient = DownloadFailure.http(503)
       for (attempt in 0..4) {
          assertEquals(DownloadWorker.FailureOutcome.Retry,
-            DownloadWorker.failureOutcome(transient, attempt, DownloadStatus.InProgress, false))
+            DownloadWorker.failureOutcome(transient, attempt, DownloadStatus.InProgress, false, ownsWork = true))
       }
       for (attempt in 5..6) {
          assertEquals(DownloadWorker.FailureOutcome.Fail,
-            DownloadWorker.failureOutcome(transient, attempt, DownloadStatus.InProgress, false))
+            DownloadWorker.failureOutcome(transient, attempt, DownloadStatus.InProgress, false, ownsWork = true))
       }
       for (failure in listOf(DownloadFailure.http(404), DownloadFailure.network(java.net.ConnectException()))) {
          assertEquals(DownloadWorker.FailureOutcome.Fail,
-            DownloadWorker.failureOutcome(failure, 0, DownloadStatus.InProgress, false))
+            DownloadWorker.failureOutcome(failure, 0, DownloadStatus.InProgress, false, ownsWork = true))
       }
    }
 
    @Test
-   fun `stopped work reverts and inactive records cannot fail or retry`() {
+   fun `scheduler stops and inactive records cannot fail or retry`() {
       for (failure in listOf(DownloadFailure.http(503), DownloadFailure.http(404))) {
-         assertEquals(DownloadWorker.FailureOutcome.Revert,
-            DownloadWorker.failureOutcome(failure, 5, DownloadStatus.InProgress, true))
+         assertEquals(DownloadWorker.FailureOutcome.Ignore,
+            DownloadWorker.failureOutcome(failure, 5, DownloadStatus.InProgress, true, ownsWork = true))
          for (status in DownloadStatus.entries.filter { it != DownloadStatus.InProgress } + listOf(null)) {
             for (stopped in listOf(false, true)) {
                assertEquals(DownloadWorker.FailureOutcome.Ignore,
-                  DownloadWorker.failureOutcome(failure, 0, status, stopped))
+                  DownloadWorker.failureOutcome(failure, 0, status, stopped, ownsWork = true))
             }
          }
       }
