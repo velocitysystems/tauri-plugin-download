@@ -671,12 +671,12 @@ through OkHttp's platform trust manager. A download fails with a `tls` error if 
 server's certificate chain requires a root certificate that the device does not trust.
 
 Before Android 14, system root certificates are stored in the system image and
-updated through OS updates. An Android 11–13 device that no longer receives those
-updates keeps the system roots from its last update. Starting with Android 14, root
-certificates can be updated through Google Play system updates via the
+updated through OS updates. A device running Android below version 14 that no longer
+receives OS updates keeps the system roots from its last update. Starting with
+Android 14, root certificates can be updated through Google Play system updates via the
 [Conscrypt module][android-conscrypt].
 
-[android-conscrypt]: https://source.android.com/docs/core/ota/modular-system/conscrypt#changes-in-android-14
+[android-conscrypt]: https://source.android.com/docs/core/ota/modular-system/conscrypt#consrypt-u
 
 ### Manifest Declarations
 
@@ -788,7 +788,8 @@ foreground resets the budget; long transfers are resumed rather than run in one 
 Android 17 enables [Encrypted Client Hello][android-17-ech] and
 [Certificate Transparency][android-17-ct] by default. Downloads use OkHttp, so
 TLS handshakes can fail against hosts with certificates that do not meet the new
-requirements. See [issue #75][issue-75] for an older device certificate store.
+requirements. See [TLS Certificates](#tls-certificates) for certificate-store
+limitations on older Android devices.
 
 Downloads to hosts on the local network may require the
 [`ACCESS_LOCAL_NETWORK`][access-local-network] permission on API 37+.
@@ -796,7 +797,6 @@ Downloads to hosts on the local network may require the
 [android-17-ech]: https://developer.android.com/about/versions/17/behavior-changes-17#ech
 [android-17-ct]: https://developer.android.com/about/versions/17/behavior-changes-17#certificate-transparency
 [access-local-network]: https://developer.android.com/about/versions/17/behavior-changes-17#local-network
-[issue-75]: https://github.com/silvermine/tauri-plugin-download/issues/75
 
 ### Project Structure
 
