@@ -21,6 +21,7 @@ State-driven, resumable download API for Tauri 2.x apps.
       * [Command errors](#command-errors)
       * [Testing with mocks](#testing-with-mocks)
    * [Android Support](#android-support)
+      * [TLS Certificates](#tls-certificates)
       * [Manifest Declarations](#manifest-declarations)
       * [Google Play Console](#google-play-console)
    * [iOS Support](#ios-support)
@@ -663,6 +664,20 @@ execution.
    downloads
 4. **App Resumed**: The plugin reconciles state and emits completion events
 
+### TLS Certificates
+
+By default, Android HTTPS downloads use the device's system CA certificate store
+through OkHttp's platform trust manager. A download fails with a `tls` error if its
+server's certificate chain requires a root certificate that the device does not trust.
+
+Before Android 14, system root certificates are stored in the system image and
+updated through OS updates. A device running Android below version 14 that no longer
+receives OS updates keeps the system roots from its last update. Starting with
+Android 14, root certificates can be updated through Google Play system updates via the
+[Conscrypt module][android-conscrypt].
+
+[android-conscrypt]: https://source.android.com/docs/core/ota/modular-system/conscrypt#consrypt-u
+
 ### Manifest Declarations
 
 Downloads run in a foreground service, which Android 14 (API 34) requires an app to
@@ -773,7 +788,8 @@ foreground resets the budget; long transfers are resumed rather than run in one 
 Android 17 enables [Encrypted Client Hello][android-17-ech] and
 [Certificate Transparency][android-17-ct] by default. Downloads use OkHttp, so
 TLS handshakes can fail against hosts with certificates that do not meet the new
-requirements. See [issue #75][issue-75] for an older device certificate store.
+requirements. See [TLS Certificates](#tls-certificates) for certificate-store
+limitations on older Android devices.
 
 Downloads to hosts on the local network may require the
 [`ACCESS_LOCAL_NETWORK`][access-local-network] permission on API 37+.
@@ -781,7 +797,6 @@ Downloads to hosts on the local network may require the
 [android-17-ech]: https://developer.android.com/about/versions/17/behavior-changes-17#ech
 [android-17-ct]: https://developer.android.com/about/versions/17/behavior-changes-17#certificate-transparency
 [access-local-network]: https://developer.android.com/about/versions/17/behavior-changes-17#local-network
-[issue-75]: https://github.com/silvermine/tauri-plugin-download/issues/75
 
 ### Project Structure
 
